@@ -1,5 +1,6 @@
 import streamlit as st
 import datetime
+import pandas as pd
 from supabase import create_client, Client
 
 st.set_page_config(page_title="Gestor Antifrágil", layout="centered")
@@ -31,6 +32,7 @@ with st.form("fluxo_diario", clear_on_submit=True):
     
     st.markdown("### 🗺️ Alocação no Método 50/30/20")
     
+    # CORRIGIDO: Nome da variável padronizado em todo o arquivo
     grupo_orcamentario = st.selectbox(
         "Selecione o Grupo Estratégico:",
         [
@@ -41,7 +43,7 @@ with st.form("fluxo_diario", clear_on_submit=True):
         ]
     )
     
-    if "50% Essencial" in group_orcamentario:
+    if "50% Essencial" in grupo_orcamentario:
         opcoes_subcategoria = [
             "Pensão Alimentícia / Obrigações Legais",
             "Habitação (Aluguel, Luz, Água, Gás)",
@@ -50,7 +52,7 @@ with st.form("fluxo_diario", clear_on_submit=True):
             "Transporte, Combustível & Logística",
             "Impostos & Taxas Obrigatórias"
         ]
-    elif "30% Estilo de Vida" in group_orcamentario:
+    elif "30% Estilo de Vida" in grupo_orcamentario:
         opcoes_subcategoria = [
             "Lazer, Bares & Restaurantes",
             "Delivery (iFood / Alimentação Conforto)",
@@ -59,7 +61,7 @@ with st.form("fluxo_diario", clear_on_submit=True):
             "Assinaturas & Entretenimento (Netflix/Spotify)",
             "Viagens & Hobbies"
         ]
-    elif "20% Aporte para a Liberdade" in group_orcamentario:
+    elif "20% Aporte para a Liberdade" in grupo_orcamentario:
         opcoes_subcategoria = [
             "Fundo de Autonomia (Reserva de Emergência)",
             "Aportes em Ações / Fundos / Renda Fixa",
@@ -85,7 +87,7 @@ with st.form("fluxo_diario", clear_on_submit=True):
     
     botao_enviar = st.form_submit_button("Registrar Movimentação Real")
 
-# Envio para o Supabase corrigido sem variáveis mortas
+# Envio para o Supabase
 if botao_enviar:
     if valor > 0 and descricao:
         try:
@@ -100,10 +102,23 @@ if botao_enviar:
             }
             
             supabase.table("movimentacoes").insert(dados_gasto).execute()
-            
-            st.success("✅ Gravado com sucesso na base de dados em nuvem do Supabase!")
+            st.success("✅ Gravado com sucesso na nuvem do Supabase!")
             st.balloons()
         except Exception as e:
             st.error(f"Erro ao salvar no banco: {e}")
     else:
         st.warning("Por favor, insira um valor e uma descrição válida.")
+
+# CONSULTA EM TEMPO REAL: Mostra os dados inseridos logo abaixo do formulário
+st.markdown("---")
+st.subheader("📋 Últimos Lançamentos Registrados")
+try:
+    resposta = supabase.table("movimentacoes").select("data, descricao, grupo_orcamentario, valor").order("id", descending=True).limit(5).execute()
+    if resposta.data:
+        df_historico = pd.DataFrame(resposta.data)
+        df_historico.columns = ["Data", "Descrição/Estabelecimento", "Grupo", "Valor (R$)"]
+        st.dataframe(df_historico, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum registro encontrado no banco de dados ainda. Faça o seu primeiro lançamento acima!")
+except Exception as e:
+    st.caption(f"Aguardando dados... ({e})")
