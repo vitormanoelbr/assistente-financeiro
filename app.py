@@ -48,49 +48,57 @@ arquivo_carregado = st.sidebar.file_uploader("Suba o CSV do Banco Inter aqui:", 
 
 if arquivo_carregado is not None:
     try:
-        # Tenta ler primeiro com ';' (padrão Inter Web)
+        # Lendo as linhas para descobrir onde começa o cabeçalho real
+        linhas = arquivo_carregado.readlines()
+        linha_cabecalho = 0
+        
+        # Procura a linha que contém termos chaves de colunas para pular o lixo do topo
+        for i, linha in enumerate(linhas):
+            linha_texto = linha.decode('utf-8', errors='ignore').lower()
+            if 'data' in linha_texto and ('valor' in linha_texto or 'desc' in linha_texto or 'hist' in linha_texto):
+                linha_cabecalho = i
+                break
+        
+        # Reseta o ponteiro do arquivo e pula as linhas inúteis do topo
+        arquivo_carregado.seek(0)
+        
         try:
-            df_bruto = pd.read_csv(arquivo_carregado, sep=';', encoding='utf-8', decimal=',', thousands='.')
+            df_bruto = pd.read_csv(arquivo_carregado, sep=';', encoding='utf-8', decimal=',', thousands='.', skiprows=linha_cabecalho)
             if len(df_bruto.columns) < 3:
                 raise ValueError
         except:
-            # Se falhar ou ler errado, tenta com ',' (padrão Inter App)
             arquivo_carregado.seek(0)
-            df_bruto = pd.read_csv(arquivo_carregado, sep=',', encoding='utf-8', decimal='.', thousands=',')
+            df_bruto = pd.read_csv(arquivo_carregado, sep=',', encoding='utf-8', decimal='.', thousands=',', skiprows=linha_cabecalho)
         
         df_bruto.columns = [col.strip() for col in df_bruto.columns]
         
-        # Identificação dinâmica de colunas por eliminação
+        # Identificação de colunas por posição física
         col_data = df_bruto.columns[0]
         col_desc = df_bruto.columns[1]
         col_valor = df_bruto.columns[2]
         
-        # Criar dataframe limpo convertendo valores para numérico puro
         df = pd.DataFrame()
         df['Data'] = df_bruto[col_data]
         df['Descricao'] = df_bruto[col_desc]
         
-        # Limpeza pesada no campo de valor para garantir que vire número absoluto
+        # Limpeza do campo de valor
         valores_limpos = df_bruto[col_valor].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
         df['Valor'] = pd.to_numeric(valores_limpos, errors='coerce')
         
-        # Se os valores vieram positivos por padrão no extrato novo do Inter, tratamos depois
+        # Classificação
         res_classif = df['Descricao'].apply(classificar_transacao)
         df['Categoria'] = [r[0] for r in res_classif]
         df['Grupo_Orcamentario'] = [r[1] for r in res_classif]
         
-        # Remove movimentações internas
         df_despesas = df[~df['Grupo_Orcamentario'].isin(['Movimentação Interna', 'Descontinuado'])].copy()
         df_despesas['Valor_Absoluto'] = df_despesas['Valor'].abs()
         
         if not df_despesas.empty:
-            # Cálculos de Métricas
             total_essencial = df_despesas[df_despesas['Grupo_Orcamentario'] == '50% Essencial']['Valor_Absoluto'].sum()
             total_estilo = df_despesas[df_despesas['Grupo_Orcamentario'] == '30% Estilo de Vida']['Valor_Absoluto'].sum()
             total_negocio = df_despesas[df_despesas['Grupo_Orcamentario'] == 'Custos de Negócio']['Valor_Absoluto'].sum()
             total_geral = df_despesas['Valor_Absoluto'].sum()
             
-            # Exibição das Métricas
             st.metric(label="🔴 50% Essencial Total", value=f"R$ {total_essencial:,.2f}")
             st.metric(label="🟡 30% Estilo de Vida Total", value=f"R$ {total_estilo:,.2f}")
             st.metric(label="💼 Custos de Negócio", value=f"R$ {total_negocio:,.2f}")
@@ -111,7 +119,7 @@ if arquivo_carregado is not None:
             df_exibicao['Valor'] = df_exibicao['Valor'].map("R$ {:,.2f}".format)
             st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
         else:
-            st.warning("Nenhum dado financeiro pôde ser extraído deste arquivo.")
+            st.warning("Nenhum dado financeiro de despesa pôde ser extraído deste arquivo.")
                 
     except Exception as e:
         st.error(f"Erro ao processar estrutura do arquivo: {e}")
