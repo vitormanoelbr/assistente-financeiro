@@ -10,7 +10,6 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 @st.cache_resource
 def inicializar_supabase():
-    # Conecta direto usando as variáveis locais, sem buscar st.secrets
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 try:
@@ -42,7 +41,7 @@ with st.form("fluxo_diario", clear_on_submit=True):
         ]
     )
     
-    if "50% Essencial" in grupo_orcamentario:
+    if "50% Essencial" in group_orcamentario:
         opcoes_subcategoria = [
             "Pensão Alimentícia / Obrigações Legais",
             "Habitação (Aluguel, Luz, Água, Gás)",
@@ -51,7 +50,7 @@ with st.form("fluxo_diario", clear_on_submit=True):
             "Transporte, Combustível & Logística",
             "Impostos & Taxas Obrigatórias"
         ]
-    elif "30% Estilo de Vida" in grupo_orcamentario:
+    elif "30% Estilo de Vida" in group_orcamentario:
         opcoes_subcategoria = [
             "Lazer, Bares & Restaurantes",
             "Delivery (iFood / Alimentação Conforto)",
@@ -60,7 +59,7 @@ with st.form("fluxo_diario", clear_on_submit=True):
             "Assinaturas & Entretenimento (Netflix/Spotify)",
             "Viagens & Hobbies"
         ]
-    elif "20% Aporte para a Liberdade" in grupo_orcamentario:
+    elif "20% Aporte para a Liberdade" in group_orcamentario:
         opcoes_subcategoria = [
             "Fundo de Autonomia (Reserva de Emergência)",
             "Aportes em Ações / Fundos / Renda Fixa",
@@ -86,7 +85,7 @@ with st.form("fluxo_diario", clear_on_submit=True):
     
     botao_enviar = st.form_submit_button("Registrar Movimentação Real")
 
-# Processamento de envio direto para a tabela
+# Envio para o Supabase corrigido sem variáveis mortas
 if botao_enviar:
     if valor > 0 and descricao:
         try:
