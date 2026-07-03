@@ -63,6 +63,7 @@ if arquivo_carregado is not None:
         arquivo_carregado.seek(0)
         
         try:
+            # CORRIGIDO: Removido o 'p' que gerava o 'pskiprows'
             df_bruto = pd.read_csv(arquivo_carregado, sep=';', encoding='utf-8', decimal=',', thousands='.', skiprows=linha_cabecalho)
             if len(df_bruto.columns) < 3:
                 raise ValueError
