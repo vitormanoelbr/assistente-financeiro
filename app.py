@@ -1,28 +1,37 @@
 import streamlit as st
 import datetime
+from supabase import create_client, Client
 
 st.set_page_config(page_title="Gestor Antifrágil", layout="centered")
 
-# Cabeçalho refinado para soar menos genérico
+# Credenciais integradas diretamente para facilitar o seu setup
+SUPABASE_URL = "https://knqqtoqxrrriefaueiem.supabase.co"
+# Chave recuperada do seu painel de API da imagem anterior
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtucXF0b3F4cnJyaWVmYXVlaWVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3NDIwMTgsImV4cCI6MjA4NjMxODAxOH0.u0qscE2D4y43nE5tq5-Qo9hM-YyvLpU68_2GfT16C-Y")
+
+@st.cache_resource
+def inicializar_supabase():
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+try:
+    supabase: Client = inicializar_supabase()
+except Exception as e:
+    st.error(f"Erro ao conectar ao banco de dados: {e}")
+
+# Cabeçalho do App
 st.title("💸 Novo Lançamento")
 st.subheader("Finanças Pessoais & Orçamento Inteligente")
 st.markdown("---")
 
-with st.form("fluxo_diario", clear_on_submit=False):
+with st.form("fluxo_diario", clear_on_submit=True):
     
-    # 1. Operação direta
     valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
-    
-    # Termos limpos e diretos para o usuário
     tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
-    
     data_movimento = st.date_input("Data do evento:", datetime.date.today())
-    
     descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Pensão, Supermercado Big Master, Posto L3...")
     
     st.markdown("### 🗺️ Alocação no Método 50/30/20")
     
-    # O usuário escolhe o pilar do método primeiro
     grupo_orcamentario = st.selectbox(
         "Selecione o Grupo Estratégico:",
         [
@@ -33,7 +42,6 @@ with st.form("fluxo_diario", clear_on_submit=False):
         ]
     )
     
-    # LÓGICA DE UX INTELIGENTE: Filtra as subcategorias com base no grupo selecionado acima
     if "50% Essencial" in grupo_orcamentario:
         opcoes_subcategoria = [
             "Pensão Alimentícia / Obrigações Legais",
@@ -66,7 +74,7 @@ with st.form("fluxo_diario", clear_on_submit=False):
             "Impostos da Empresa"
         ]
         
-    categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria)
+    categoria = st.selectbox("Subcategoria Corresponding:", opcoes_subcategoria)
     
     st.markdown("---")
     st.markdown("**🧠 Análise de Intencionalidade (Psicologia Financeira)**")
@@ -76,8 +84,28 @@ with st.form("fluxo_diario", clear_on_submit=False):
         value="2 - Moderado / Útil"
     )
     
-    botao_enviar = st.form_submit_button("Registrar Movimentação")
+    botao_enviar = st.form_submit_button("Registrar Movimentação Real")
 
+# Processamento de envio direto para a tabela
 if botao_enviar:
-    st.success(f"Capturado com sucesso! Categoria alocada: {categoria}")
-    st.balloons()
+    if valor > 0 and descricao:
+        try:
+            dados_gasto = {
+                "data": str(data_movimento),
+                "valor": float(valor),
+                "tipo": tipo,
+                "descricao": descricao,
+                "grupo_orcamentario": grupo_orcamentario,
+                "subcategoria": categoria,
+                "satisfacao": satisfacao
+            }
+            
+            # Envia diretamente para a tabela que você executou no SQL Editor
+            supabase.table("movimentacoes").insert(dados_gasto).execute()
+            
+            st.success("✅ Gravado com sucesso na base de dados em nuvem do Supabase!")
+            st.balloons()
+        except Exception as e:
+            st.error(f"Erro ao salvar no banco: {e}")
+    else:
+        st.warning("Por favor, insira um valor e uma descrição válida.")
