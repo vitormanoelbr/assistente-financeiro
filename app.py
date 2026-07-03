@@ -23,28 +23,39 @@ try:
 except Exception as e:
     st.error(f"Falha na conexão estrutural: {e}")
 
-# --- 🎯 PAINEL DE METAS E PARÂMETROS PADRÃO (ALTERE AQUI DEFINITIVAMENTE) ---
-# Altere os textos e valores abaixo para que o sistema já abra com as suas metas definitivas
-NOME_META_1_PADRAO = "🧱 Reserva de Emergência"
-VALOR_META_1_PADRAO = 5000.00
-
-NOME_META_2_PADRAO = "🏡 Comprar Casa" # Modificado para o seu novo objetivo com emoji correspondente
-VALOR_META_2_PADRAO = 10000.00
+# --- 🧠 PERSISTÊNCIA DE ESTADO DE SESSÃO (EVITA RESET POR F5) ---
+if "meta_1_nome" not in st.session_state:
+    st.session_state["meta_1_nome"] = "🧱 Reserva de Emergência"
+if "meta_1_valor" not in st.session_state:
+    st.session_state["meta_1_valor"] = 5000.00
+if "meta_2_nome" not in st.session_state:
+    st.session_state["meta_2_nome"] = "🚗 Comprar Carro"
+if "meta_2_valor" not in st.session_state:
+    st.session_state["meta_2_valor"] = 80000.00
 
 # --- ⚙️ MENU LATERAL DE CONFIGURAÇÕES (SIDEBAR) ---
 st.sidebar.header("⚙️ Configurações do Perfil")
 RENDA_BASE = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=2500.00, step=100.0)
 
 st.sidebar.markdown("---")
-st.sidebar.header("🎯 Metas de Investimento (Porquinhos)")
-st.sidebar.caption("Visualize ou ajuste temporariamente os seus objetivos nesta sessão.")
+st.sidebar.header("🎯 Configurar Objetivos (Porquinhos)")
+st.sidebar.caption("Altere os nomes e valores abaixo e clique em 'Salvar Objetivos' para fixá-los na interface.")
 
-# Inputs da barra lateral inicializados com os valores padrões definidos no topo do código
-nome_fundo_1 = st.sidebar.text_input("Nome do Objetivo 1:", value=NOME_META_1_PADRAO)
-alvo_fundo_1 = st.sidebar.number_input("Valor Alvo do Objetivo 1 (R$):", min_value=0.0, value=VALOR_META_1_PADRAO, step=500.0)
+# Inputs interativos que alimentam a sessão estável
+novo_nome_1 = st.sidebar.text_input("Objetivo 1:", value=st.session_state["meta_1_nome"])
+novo_valor_1 = st.sidebar.number_input("Alvo 1 (R$):", min_value=0.0, value=st.session_state["meta_1_valor"], step=500.0)
 
-nome_fundo_2 = st.sidebar.text_input("Nome do Objetivo 2:", value=NOME_META_2_PADRAO)
-alvo_fundo_2 = st.sidebar.number_input("Valor Alvo do Objetivo 2 (R$):", min_value=0.0, value=VALOR_META_2_PADRAO, step=1000.0)
+novo_nome_2 = st.sidebar.text_input("Objetivo 2:", value=st.session_state["meta_2_nome"])
+novo_valor_2 = st.sidebar.number_input("Alvo 2 (R$):", min_value=0.0, value=st.session_state["meta_2_valor"], step=1000.0)
+
+# Botão gerenciador que impede o app de "esquecer" os novos nomes digitados
+if st.sidebar.button("💾 Salvar Objetivos no Painel"):
+    st.session_state["meta_1_nome"] = novo_nome_1
+    st.session_state["meta_1_valor"] = novo_valor_1
+    st.session_state["meta_2_nome"] = novo_nome_2
+    st.session_state["meta_2_valor"] = novo_valor_2
+    st.sidebar.success("🎯 Objetivos atualizados com sucesso!")
+    st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Filtros de Tempo")
@@ -108,11 +119,11 @@ if supabase:
                     else:
                         total_pago_divida += val_mov
                 
-                # Motor de Porquinhos
+                # Motor de Porquinhos baseado nas variáveis salvas na sessão
                 if "20% Aporte" in grupo:
-                    if subcat == nome_fundo_1:
+                    if subcat == st.session_state["meta_1_nome"]:
                         acumulado_porquinho_1 += val_mov
-                    elif subcat == nome_fundo_2:
+                    elif subcat == st.session_state["meta_2_nome"]:
                         acumulado_porquinho_2 += val_mov
             
             # Filtro Temporal do Período
@@ -158,7 +169,7 @@ MAPA_CATEGORIAS = {
         "Viagens & Hobbies", "Assinaturas (Netflix, Spotify)"
     ],
     "🚀 20% Aporte para a Liberdade (Investimentos e Futuro)": [
-        nome_fundo_1, nome_fundo_2, "Investimentos Gerais / Outros"
+        st.session_state["meta_1_nome"], st.session_state["meta_2_nome"], "Investimentos Gerais / Outros"
     ],
     "📋 Quitação de Dívidas (Amortizações e Acordos)": [
         "Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens", "Dívidas Pessoais / Terceiros"
@@ -184,17 +195,16 @@ with aba_painel:
     col1.metric(label="Volume Devedor Inicial", value=f"R$ {DIVIDA_TOTAL_INICIAL:,.2f}")
     col2.metric(label="Total Amortizado (Pago)", value=f"R$ {total_pago_divida:,.2f}")
     
-    if divida_restante > 0:
-        col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {divida_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
-    else:
-        col3.metric(label="Saldo Devedor", value="R$ 0,00 🎉", delta="Quitado!")
+    if dividas_restante := divida_restante:
+        if dividas_restante > 0:
+            col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {dividas_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
+        else:
+            col3.metric(label="Saldo Devedor", value="R$ 0,00 🎉", delta="Quitado!")
         
     if DIVIDA_TOTAL_INICIAL > 0:
         perc_divida_paga = min(total_pago_divida / DIVIDA_TOTAL_INICIAL, 1.0)
         st.progress(perc_divida_paga)
         st.caption(f"Progresso de Liquidação: **{perc_divida_paga * 100:.1f}%** do montante quitado.")
-    else:
-        st.info("💡 Nenhuma dívida ativa mapeada no histórico.")
     
     st.markdown("---")
     st.markdown("### 🧭 Distribuição Líquida do Período")
@@ -220,13 +230,13 @@ with aba_painel:
     
     grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
     opcoes_subcategoria = MAPA_CATEGORIAS[grupo_orcamentario]
-    categoria = st.selectbox("Subcategoria Corresponding:", opcoes_subcategoria, key="sub_filho_main")
+    categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria, key="sub_filho_main")
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
         valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
         tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
         data_movimento = st.date_input("Data do evento:", datetime.date.today())
-        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Mercado, Parcela de Financiamento...")
+        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Parcela do Objetivo, Mercado, Luz...")
         satisfacao = st.select_slider("🧠 Nível de necessidade real?", options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"], value="2 - Útil / Desejável")
         botao_enviar = st.form_submit_button("Confirmar Lançamento")
         
@@ -278,30 +288,30 @@ with aba_porquinhos:
     st.markdown("---")
     
     # PORQUINHO 1
-    if alvo_fundo_1 > 0 and nome_fundo_1:
-        st.subheader(f"{nome_fundo_1}")
-        falta_fundo_1 = max(alvo_fundo_1 - acumulado_porquinho_1, 0.0)
+    if st.session_state["meta_1_valor"] > 0 and st.session_state["meta_1_nome"]:
+        st.subheader(f"{st.session_state['meta_1_nome']}")
+        falta_fundo_1 = max(st.session_state["meta_1_valor"] - acumulado_porquinho_1, 0.0)
         
         c1, c2, c3 = st.columns(3)
-        c1.metric(label="Valor Alvo Final", value=f"R$ {alvo_fundo_1:,.2f}")
+        c1.metric(label="Valor Alvo Final", value=f"R$ {st.session_state['meta_1_valor']:,.2f}")
         c2.metric(label="Total Já Acumulado", value=f"R$ {acumulado_porquinho_1:,.2f}", delta="Guardado")
         c3.metric(label="Quanto Falta Poupar", value=f"R$ {falta_fundo_1:,.2f}")
         
-        perc_1 = min(acumulado_porquinho_1 / alvo_fundo_1, 1.0)
+        perc_1 = min(acumulado_porquinho_1 / st.session_state["meta_1_valor"], 1.0)
         st.progress(perc_1)
         st.markdown(f"**Progresso:** {perc_1 * 100:.1f}%")
         st.markdown("---")
         
     # PORQUINHO 2
-    if alvo_fundo_2 > 0 and nome_fundo_2:
-        st.subheader(f"{nome_fundo_2}")
-        falta_fundo_2 = max(alvo_fundo_2 - acumulado_porquinho_2, 0.0)
+    if st.session_state["meta_2_valor"] > 0 and st.session_state["meta_2_nome"]:
+        st.subheader(f"{st.session_state['meta_2_nome']}")
+        falta_fundo_2 = max(st.session_state["meta_2_valor"] - acumulado_porquinho_2, 0.0)
         
         m1, m2, m3 = st.columns(3)
-        m1.metric(label="Valor Alvo Final", value=f"R$ {alvo_fundo_2:,.2f}")
+        m1.metric(label="Valor Alvo Final", value=f"R$ {st.session_state['meta_2_valor']:,.2f}")
         m2.metric(label="Total Já Acumulado", value=f"R$ {acumulado_porquinho_2:,.2f}", delta="Guardado")
         m3.metric(label="Quanto Falta Poupar", value=f"R$ {falta_fundo_2:,.2f}")
         
-        perc_2 = min(acumulado_porquinho_2 / alvo_fundo_2, 1.0)
+        perc_2 = min(acumulado_porquinho_2 / st.session_state["meta_2_valor"], 1.0)
         st.progress(perc_2)
         st.markdown(f"**Progresso:** {perc_2 * 100:.1f}%")
