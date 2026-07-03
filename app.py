@@ -6,7 +6,7 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Meu Planner Financeiro", layout="centered")
 
-# --- 🔐 CONEXÃO BLINDADA (USANDO STREAMLIT SECRETS) ---
+# --- 🔐 CONEXÃO SECRETA ---
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -26,7 +26,6 @@ except Exception as e:
 # --- ⚙️ PERFIL & FILTROS (SIDEBAR) ---
 st.sidebar.header("⚙️ Configurações do Perfil")
 RENDA_BASE = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=2500.00, step=100.0)
-DIVIDA_TOTAL_INICIAL = st.sidebar.number_input("Valor Total da sua Dívida (R$):", min_value=0.0, value=0.0, step=100.0)
 
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Filtros de Tempo")
@@ -51,7 +50,7 @@ mes_selecionado_num = st.sidebar.selectbox(
 
 janela_tempo = st.sidebar.radio("Visualizar intervalo:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
-# --- CÁLCULO DE METAS E ORÇAMENTO ---
+# --- CÁLCULO DE METAS ---
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE = RENDA_BASE * 0.20           
@@ -59,22 +58,37 @@ META_APORTE = RENDA_BASE * 0.20
 gastos_essencial = 0.0
 gastos_estilo = 0.0
 gastos_aporte = 0.0
+
+# Novas variáveis dinâmicas de dívida baseadas puramente no banco de dados
+DIVIDA_TOTAL_INICIAL = 0.0
 total_pago_divida = 0.0
+
 df_todos_dados = pd.DataFrame()
 df_filtrado = pd.DataFrame()
 
 if supabase:
     try:
-        resposta_completa = supabase.table("movimentacoes").select("id, data, descricao, grupo_orcamentario, subcategoria, valor, satisfacao").execute()
+        resposta_completa = supabase.table("movimentacoes").select("id, data, descricao, grupo_orcamentario, subcategoria, valor, satisfacao, tipo").execute()
         if res_data := resposta_completa.data:
             df_todos_dados = pd.DataFrame(res_data)
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
+            # INTELIGÊNCIA UNIFICADA DE DÍVIDAS: Varre o histórico completo para calcular o saldo real
             for item in res_data:
-                if "📋 Quitação de Dívidas" in item["grupo_orcamentario"]:
-                    total_pago_divida += float(item["valor"])
+                grupo = item["grupo_orcamentario"]
+                tipo_mov = item.get("tipo", "Gasto ou Investimento (Saída)")
+                val_mov = float(item["valor"])
+                
+                if "📋 Quitação de Dívidas" in grupo:
+                    if "Entrada" in tipo_mov:
+                        # Se entrou como receita/registro, acumula o tamanho da dívida real
+                        DIVIDA_TOTAL_INICIAL += val_mov
+                    else:
+                        # Se saiu como gasto, foi um pagamento de parcela (amortização)
+                        total_pago_divida += val_mov
             
+            # Filtros temporais normais para o restante do painel líquido do mês
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
@@ -90,12 +104,15 @@ if supabase:
             for _, row in df_filtrado.iterrows():
                 val = float(row["valor"])
                 grupo = row["grupo_orcamentario"]
-                if "50% Essencial" in grupo:
-                    gastos_essencial += val
-                elif "30% Estilo de Vida" in group:
-                    gastos_estilo += val
-                elif "20% Aporte" in grupo:
-                    gastos_aporte += val
+                tipo_mov = row.get("tipo", "Gasto ou Investimento (Saída)")
+                
+                if "Saída" in tipo_mov:
+                    if "50% Essencial" in grupo:
+                        gastos_essencial += val
+                    elif "30% Estilo de Vida" in grupo:
+                        gastos_estilo += val
+                    elif "20% Aporte" in grupo:
+                        gastos_aporte += val
                     
     except Exception as e:
         st.error(f"Erro no processamento de dados: {e}")
@@ -117,14 +134,14 @@ MAPA_CATEGORIAS = {
         "Reserva de Autonomia (Emergência)", "Aportes Renda Fixa", "Aportes Renda Variável"
     ],
     "📋 Quitação de Dívidas (Amortizações e Acordos)": [
-        "Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens"
+        "Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens", "Dívidas Pessoais / Terceiros"
     ],
     "💼 Custos de Negócio (Projetos e Clínica)": [
         "Ferramentas SaaS & Softwares", "Marketing & Anúncios", "Infraestrutura & Custos Operacionais"
     ]
 }
 
-# --- NAVEGAÇÃO POR ABAS ---
+# --- INTERFACE ---
 aba_painel, aba_investimentos = st.tabs(["📊 Painel & Lançamentos", "🚀 Investimentos (Experimental)"])
 
 with aba_painel:
@@ -132,20 +149,25 @@ with aba_painel:
     st.markdown(f"**Competência:** {lista_meses[mes_selecionado_num]} / {ano_selecionado} ({janela_tempo})")
     st.markdown("---")
     
-    # PAINEL DE DÍVIDAS
+    # PAINEL DE DÍVIDAS ATUALIZADO
     st.subheader("📊 Painel de Limites Orçamentários")
-    st.markdown("### 🧮 Situação de Dívidas Atuais")
-    col1, col2 = st.columns(2)
-    col1.metric(label="Dívida Restante Atual", value=f"R$ {divida_restante:,.2f}")
-    col2.metric(label="Total Amortizado (Histórico)", value=f"R$ {total_pago_divida:,.2f}")
+    st.markdown("### 🧮 Situação de Dívidas Estruturadas (Calculado via Banco)")
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric(label="Volume de Dívida Registrada", value=f"R$ {DIVIDA_TOTAL_INICIAL:,.2f}")
+    col2.metric(label="Total Pago / Amortizado", value=f"R$ {total_pago_divida:,.2f}")
+    col3.metric(label="Saldo Devedor Restante", value=f"R$ {divida_restante:,.2f}")
     
     if DIVIDA_TOTAL_INICIAL > 0:
         perc_divida_paga = min(total_pago_divida / DIVIDA_TOTAL_INICIAL, 1.0)
         st.progress(perc_divida_paga)
+        st.caption(f"Progresso de Liquidação Total: **{perc_divida_paga * 100:.1f}%**")
+    else:
+        st.info("💡 Nenhuma dívida mapeada. Para registrar o valor inicial de uma dívida, faça um lançamento do tipo 'Faturamento ou Receita (Entrada)' selecionando o grupo 'Quitação de Dívidas'.")
     
     st.markdown("---")
     
-    # VISUALIZAÇÃO DOS LIMITES
+    # LIMITES LÍQUIDOS
     st.write(f"🔴 **Gasto Essencial:** R$ {gastos_essencial:,.2f} de R$ {LIMITE_ESSENCIAL:,.2f}")
     st.progress(min(gastos_essencial / LIMITE_ESSENCIAL, 1.0) if LIMITE_ESSENCIAL > 0 else 0.0)
     
@@ -155,14 +177,14 @@ with aba_painel:
     st.write(f"🚀 **Aportes Efetuados:** R$ {gastos_aporte:,.2f} de R$ {META_APORTE:,.2f}")
     st.progress(min(gastos_aporte / META_APORTE, 1.0) if META_APORTE > 0 else 0.0)
 
-    # REPRODUÇÃO DOS GRÁFICOS
+    # GRÁFICOS
     if not df_filtrado.empty:
         st.markdown("---")
         df_agrupado = df_filtrado.groupby("grupo_orcamentario")["valor"].sum().reset_index()
         fig_rosca = px.pie(df_agrupado, values="valor", names="grupo_orcamentario", hole=0.4, title="Distribuição Financeira Real (R$)")
         st.plotly_chart(fig_rosca, use_container_width=True)
 
-    # FORMULÁRIO DE REGISTRO
+    # LANÇAMENTO DE MOVIMENTAÇÃO
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação")
     
@@ -172,9 +194,17 @@ with aba_painel:
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
         valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
-        tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
+        
+        # INSTRUÇÃO VISUAL NO SELECTOR DE DIREÇÃO DO DINHEIRO
+        tipo = st.radio(
+            "Direção do dinheiro (Atenção para Dívidas):", 
+            ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], 
+            horizontal=True,
+            help="Para registrar uma DÍVIDA NOVA, marque 'Entrada'. Para registrar o PAGAMENTO de uma parcela, marque 'Saída'."
+        )
+        
         data_movimento = st.date_input("Data do evento:", datetime.date.today())
-        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Mercado, Aluguel, Parcela...")
+        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Parcela Banco do Brasil, Empréstimo Flavielly, Mercado...")
         satisfacao = st.select_slider("🧠 Nível de necessidade real?", options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"], value="2 - Útil / Desejável")
         botao_enviar = st.form_submit_button("Confirmar Lançamento")
         
@@ -187,17 +217,20 @@ with aba_painel:
                     "subcategoria": categoria, "satisfacao": satisfacao
                 }
                 supabase.table("movimentacoes").insert(dados_gasto).execute()
-                st.success("✅ Lançamento computado com sucesso!")
+                st.success("✅ Operação registrada com sucesso!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # GERENCIADOR INTERATIVO DE DADOS
+    # GERENCIADOR TOTAL INTERATIVO (O ÚNICO LUGAR DE EDICAO E EXCLUSAO)
     st.markdown("---")
     st.subheader("📋 Gerenciar Lançamentos do Período")
+    st.caption("💡 Para corrigir valores errados de dívida ou gasto, altere os números abaixo e salve. Para deletar, selecione e use Delete.")
+    
     if supabase and not df_filtrado.empty:
-        df_editor = df_filtrado[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor"]].copy()
-        df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)"]
+        # Adicionado o campo 'tipo' no editor para o usuário poder alterar de Entrada para Saída direto se errar
+        df_editor = df_filtrado[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
+        df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Tipo"]
         
         dados_editados = st.data_editor(df_editor, use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic")
         
@@ -212,9 +245,15 @@ with aba_painel:
                 for _, row in dados_editados.iterrows():
                     row_id = int(row["ID"])
                     orig_row = df_editor[df_editor["ID"] == row_id].iloc[0]
-                    if (row["Descrição"] != orig_row["Descrição"]) or (float(row["Valor (R$)"]) != float(orig_row["Valor (R$)"])):
-                        supabase.table("movimentacoes").update({"descricao": row["Descrição"], "valor": float(row["Valor (R$)"])}).eq("id", row_id).execute()
-                st.success("🔄 Alterações sincronizadas com total segurança!")
+                    
+                    if (row["Descrição"] != orig_row["Descrição"]) or (float(row["Valor (R$)"]) != float(orig_row["Valor (R$)"])) or (row["Tipo"] != orig_row["Tipo"]):
+                        supabase.table("movimentacoes").update({
+                            "descricao": row["Descrição"], 
+                            "valor": float(row["Valor (R$)"]),
+                            "tipo": row["Tipo"]
+                        }).eq("id", row_id).execute()
+                        
+                st.success("🔄 Todo o ecossistema (Painel, Dívidas e Gráficos) sincronizado com sucesso!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar alterações: {e}")
@@ -222,4 +261,3 @@ with aba_painel:
 with aba_investimentos:
     st.header("📈 Centro de Acumulação de Patrimônio")
     st.metric(label="Total Alocado para o Futuro no Período", value=f"R$ {gastos_aporte:,.2f}", delta=f"Meta: R$ {META_APORTE:,.2f}")
-    st.info("💡 Módulo de investimentos estruturado em background. Chaves de API externas prontas para auditorias de segurança.")
