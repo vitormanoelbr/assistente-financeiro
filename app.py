@@ -13,33 +13,36 @@ st.markdown("---")
 REGRAS_ORCAMENTO = {
     'ATACADAO': ('Mercado', '50% Essencial'),
     'BIG MASTE': ('Mercado', '50% Essencial'),
+    'WMS SUPERMERCADOS': ('Mercado', '50% Essencial'),
     'AMERICANAS': ('Mercado', '50% Essencial'),
     'VIDA  SAUDE': ('Saúde', '50% Essencial'),
     'DENISE KATER': ('Farmácia', '50% Essencial'),
+    'DROGARIAS FARMARELA': ('Farmácia', '50% Essencial'),
     'C. P. DA SILVA': ('Gás de Cozinha', '50% Essencial'),
     'SEGUNDO OFICIO': ('Taxas/Cartório', '50% Essencial'),
     'VIVO MT': ('Telecom', '50% Essencial'),
     'CLARO': ('Telecom', '50% Essencial'),
-    'Talia Rocha Ribeiro': ('Babá/Filho', '50% Essencial'),
-    'Isabela Luisa Stangherlim': ('Pensão/Filho', '50% Essencial'),
+    'TALIA ROCHA RIBEIRO': ('Babá/Filho', '50% Essencial'),
+    'ISABELA LUISA STANGHERLIM': ('Pensão/Filho', '50% Essencial'),
     'AUTO POSTO L3': ('Transporte', '50% Essencial'),
+    'ME COMERCIO DE COMBUSTIVEIS': ('Transporte', '50% Essencial'),
     'RECEITA FEDERAL': ('Impostos', '50% Essencial'),
+    'SEFAZ MT': ('Impostos', '50% Essencial'),
     'IFOODCOM': ('Alimentação/Delivery', '30% Estilo de Vida'),
-    'Netshoes': ('Presente Namorada', '30% Estilo de Vida'),
+    'NETSHOES': ('Presente Namorada', '30% Estilo de Vida'),
     'ROTARY CLUB': ('Doações/Social', '30% Estilo de Vida'),
     'IGREJA BATISTA': ('Contribuições/Religião', '30% Estilo de Vida'),
-    'Google One': ('Assinaturas Tech', '30% Estilo de Vida'),
+    'GOOGLE ONE': ('Assinaturas Tech', '30% Estilo de Vida'),
     'CDB PORQUINHO': ('Aplicação/Resgate', 'Movimentação Interna'),
-    'CDB Porq': ('Aplicação/Resgate', 'Movimentação Interna'),
-    'ChatGPT': ('Ferramentas SaaS', 'Custos de Negócio'),
-    'HTM JMM': ('Plataformas Cursos', 'Custos de Negócio'),
-    'ORIZONTE CONNECT': ('Apostas Online', 'Descontinuado'),
-    'J E C V TECHNOLOGY': ('Apostas Online', 'Descontinuado')
+    'CDB PORQ': ('Aplicação/Resgate', 'Movimentação Interna'),
+    'CHATGPT': ('Ferramentas SaaS', 'Custos de Negócio'),
+    'HTM JMM': ('Plataformas Cursos', 'Custos de Negócio')
 }
 
 def classificar_transacao(descricao):
+    desc_upper = str(descricao).upper()
     for termo, (categoria, grupo) in REGRAS_ORCAMENTO.items():
-        if termo in str(descricao).upper():
+        if termo in desc_upper:
             return categoria, grupo
     return 'Outros', 'A Classificar'
 
@@ -53,36 +56,36 @@ if arquivo_carregado is not None:
         conteudo_bruto = arquivo_carregado.read().decode('utf-8', errors='ignore')
         linhas = conteudo_bruto.splitlines()
         
-        # Encontra a linha exata onde começa a tabela do Inter
+        # Encontra a linha onde começa a tabela real
         linha_inicio_tabela = 0
         for i, linha in enumerate(linhas):
             if 'data lançamento' in linha.lower():
                 linha_inicio_tabela = i
                 break
                 
-        # Mantém apenas a tabela pulando o cabeçalho de informações da conta
-        linhas_tabela = linhas[linha_inicio_tabela:]
+        linhas_tabela = lines_tabela = linhas[linha_inicio_tabela:]
         arquivo_limpo = io.StringIO('\n'.join(linhas_tabela))
         
-        # Lê o CSV sabendo que o separador do seu arquivo é o ';'
-        df_bruto = pd.read_csv(arquivo_limpo, sep=';', decimal=',', thousands='.')
+        # Lê o CSV tratando ponto e vírgula
+        df_bruto = pd.read_csv(arquivo_limpo, sep=';')
         df_bruto.columns = [col.strip() for col in df_bruto.columns]
         
-        # Puxa os dados das colunas reais do seu arquivo: 'Data Lançamento', 'Descrição', 'Valor'
         df = pd.DataFrame()
         df['Data'] = df_bruto['Data Lançamento']
         df['Descricao'] = df_bruto['Descrição']
         
-        # Limpeza e conversão do Valor
-        valores_limpos = df_bruto['Valor'].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
-        df['Valor'] = pd.to_numeric(valores_limpos, errors='coerce')
+        # CORREÇÃO DA CONVERSÃO: Trata o formato numérico sem multiplicar valores por 10000
+        valores_raw = df_bruto['Valor'].astype(str).str.replace('R$', '', regex=False).str.strip()
+        # Se contiver pontos de milhar, removemos. Substitui a vírgula decimal por ponto.
+        valores_corrigidos = valores_raw.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        df['Valor'] = pd.to_numeric(valores_corrigidos, errors='coerce')
         
-        # Aplicar regras de negócio e categorização
+        # Classificação
         res_classif = df['Descricao'].apply(classificar_transacao)
         df['Categoria'] = [r[0] for r in res_classif]
         df['Grupo_Orcamentario'] = [r[1] for r in res_classif]
         
-        # Filtra apenas o que for despesa (Valores negativos) tirando as movimentações internas
+        # Filtrar apenas saídas legítimas (Valores negativos) e ignorar investimentos/resgates
         df_despesas = df[(df['Valor'] < 0) & (~df['Grupo_Orcamentario'].isin(['Movimentação Interna', 'Descontinuado']))].copy()
         df_despesas['Valor_Absoluto'] = df_despesas['Valor'].abs()
         
@@ -92,6 +95,7 @@ if arquivo_carregado is not None:
             total_negocio = df_despesas[df_despesas['Grupo_Orcamentario'] == 'Custos de Negócio']['Valor_Absoluto'].sum()
             total_geral = df_despesas['Valor_Absoluto'].sum()
             
+            # Cards de Métricas corrigidos
             st.metric(label="🔴 50% Essencial Total", value=f"R$ {total_essencial:,.2f}")
             st.metric(label="🟡 30% Estilo de Vida Total", value=f"R$ {total_estilo:,.2f}")
             st.metric(label="💼 Custos de Negócio", value=f"R$ {total_negocio:,.2f}")
@@ -112,7 +116,7 @@ if arquivo_carregado is not None:
             df_exibicao['Valor'] = df_exibicao['Valor'].map("R$ {:,.2f}".format)
             st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
         else:
-            st.warning("Nenhuma despesa (valor negativo) encontrada no arquivo.")
+            st.warning("Nenhuma despesa de saída encontrada neste período do extrato.")
                 
     except Exception as e:
         st.error(f"Erro ao processar estrutura do arquivo: {e}")
