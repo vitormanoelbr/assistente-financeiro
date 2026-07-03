@@ -3,81 +3,81 @@ import datetime
 
 st.set_page_config(page_title="Gestor Antifrágil", layout="centered")
 
-# Cabeçalho focado em comportamento e no método
+# Cabeçalho refinado para soar menos genérico
 st.title("💸 Novo Lançamento")
-st.subheader("Mentalidade Financeira & Fluxo de Caixa")
+st.subheader("Finanças Pessoais & Orçamento Inteligente")
 st.markdown("---")
 
-# Criando o formulário que agrupa os inputs para não atualizar a página a cada clique
 with st.form("fluxo_diario", clear_on_submit=False):
     
-    # 1. Entrada de Valor Puro
-    valor = st.number_input(
-        "Qual o valor da operação? (R$)", 
-        min_value=0.0, 
-        step=5.0, 
-        format="%.2f",
-        help="Insira o valor absoluto. O sistema gerenciará se é crédito ou débito."
-    )
+    # 1. Operação direta
+    valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
     
-    # 2. Natureza do Fluxo
-    tipo = st.radio(
-        "Natureza da movimentação:", 
-        ["Saída (Gasto/Investimento)", "Entrada (Faturamento/Receita)"], 
-        horizontal=True
-    )
+    # Termos limpos e diretos para o usuário
+    tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
     
-    # 3. Data (Padrão hoje, mas permite retroagir se você esqueceu de lançar ontem)
     data_movimento = st.date_input("Data do evento:", datetime.date.today())
     
-    # 4. Descrição Livre (Gatilho para o futuro motor de busca do Supabase)
-    descricao = st.text_input(
-        "Descrição ou Estabelecimento:", 
-        placeholder="Ex: Supermercado Big Master, Posto L3, Pix João..."
-    )
+    descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Pensão, Supermercado Big Master, Posto L3...")
     
-    st.markdown("### 💡 Vetores da Metodologia")
+    st.markdown("### 🗺️ Alocação no Método 50/30/20")
     
-    # 5. Grupos Baseados na Flexibilidade (Abordagem Cerbasi/Taleb)
+    # O usuário escolhe o pilar do método primeiro
     grupo_orcamentario = st.selectbox(
-        "Grupo Estratégico:",
+        "Selecione o Grupo Estratégico:",
         [
-            "🔴 50% Essencial (Custos Fixos Pesados/Sobrevivência)", 
-            "🟡 30% Estilo de Vida (Custos Voláteis/Flexíveis)", 
-            "💼 Custos de Negócio (Clínica/Projetos)",
-            "🚀 Aporte para a Liberdade (Pague-se Primeiro / Antifrágil)",
-            "🔄 Movimentação Interna (Apenas Transferência entre Contas)"
+            "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", 
+            "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)", 
+            "🚀 20% Aporte para a Liberdade (Investimentos e Futuro)",
+            "💼 Custos de Negócio (Projetos e Clínica)"
         ]
     )
     
-    # 6. Categorias para granularidade dos gráficos
-    categoria = st.selectbox(
-        "Subcategoria:",
-        [
-            "Alimentação & Mercado", 
-            "Transporte & Combustível", 
-            "Saúde & Farmácia", 
-            "Moradia & Utilidades",
-            "Lazer, Viagens & Delivery",
-            "Ferramentas SaaS & Marketing",
-            "Educação & Livros",
-            "Outros / Não Mapeado"
+    # LÓGICA DE UX INTELIGENTE: Filtra as subcategorias com base no grupo selecionado acima
+    if "50% Essencial" in grupo_orcamentario:
+        opcoes_subcategoria = [
+            "Pensão Alimentícia / Obrigações Legais",
+            "Habitação (Aluguel, Luz, Água, Gás)",
+            "Alimentação Básica & Mercado",
+            "Saúde, Plano Médico & Farmácia",
+            "Transporte, Combustível & Logística",
+            "Impostos & Taxas Obrigatórias"
         ]
-    )
+    elif "30% Estilo de Vida" in grupo_orcamentario:
+        opcoes_subcategoria = [
+            "Lazer, Bares & Restaurantes",
+            "Delivery (iFood / Alimentação Conforto)",
+            "Vestuário, Compras & Presentes",
+            "Estética, Cuidados Pessoais & Academia",
+            "Assinaturas & Entretenimento (Netflix/Spotify)",
+            "Viagens & Hobbies"
+        ]
+    elif "20% Aporte para a Liberdade" in grupo_orcamentario:
+        opcoes_subcategoria = [
+            "Fundo de Autonomia (Reserva de Emergência)",
+            "Aportes em Ações / Fundos / Renda Fixa",
+            "Previdência & Seguros de Proteção"
+        ]
+    else:
+        opcoes_subcategoria = [
+            "Ferramentas SaaS & Softwares",
+            "Marketing & Anúncios",
+            "Infraestrutura & Custos Operacionais",
+            "Impostos da Empresa"
+        ]
+        
+    categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria)
     
     st.markdown("---")
-    # 7. O Filtro Psicológico (Fator Morgan Housel)
     st.markdown("**🧠 Análise de Intencionalidade (Psicologia Financeira)**")
     satisfacao = st.select_slider(
-        "Qual o nível de necessidade real ou retorno de felicidade deste gasto?",
-        options=["1 - Impulsivo / Desnecessário", "2 - Útil / Moderado", "3 - Essencial / Alto Retorno"],
-        value="2 - Útil / Moderado"
+        "Qual o retorno de bem-estar ou necessidade real deste gasto?",
+        options=["1 - Baixo retorno / Impulsivo", "2 - Moderado / Útil", "3 - Alto retorno / Indispensável"],
+        value="2 - Moderado / Útil"
     )
     
-    # Botão de envio do formulário
-    botao_enviar = st.form_submit_button("Registrar Movimentação Real")
+    botao_enviar = st.form_submit_button("Registrar Movimentação")
 
-# Espaço temporário para simular o sucesso do clique no protótipo
 if botao_enviar:
-    st.success(f"Prototipagem Funcional! Dados capturados: R$ {valor:.2f} | {descricao} | {grupo_orcamentario.split(' ')[1]}")
+    st.success(f"Capturado com sucesso! Categoria alocada: {categoria}")
     st.balloons()
