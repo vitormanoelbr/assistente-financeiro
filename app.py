@@ -4,13 +4,13 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Gestor Antifrágil", layout="centered")
 
-# Credenciais integradas diretamente para facilitar o seu setup
+# Credenciais integradas diretamente para rodar instantaneamente
 SUPABASE_URL = "https://knqqtoqxrrriefaueiem.supabase.co"
-# Chave recuperada do seu painel de API da imagem anterior
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtucXF0b3F4cnJyaWVmYXVlaWVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3NDIwMTgsImV4cCI6MjA4NjMxODAxOH0.u0qscE2D4y43nE5tq5-Qo9hM-YyvLpU68_2GfT16C-Y")
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtucXF0b3F4cnJyaWVmYXVlaWVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3NDIwMTgsImV4cCI6MjA4NjMxODAxOH0.u0qscE2D4y43nE5tq5-Qo9hM-YyvLpU68_2GfT16C-Y"
 
 @st.cache_resource
 def inicializar_supabase():
+    # Conecta direto usando as variáveis locais, sem buscar st.secrets
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 try:
@@ -74,7 +74,7 @@ with st.form("fluxo_diario", clear_on_submit=True):
             "Impostos da Empresa"
         ]
         
-    categoria = st.selectbox("Subcategoria Corresponding:", opcoes_subcategoria)
+    categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria)
     
     st.markdown("---")
     st.markdown("**🧠 Análise de Intencionalidade (Psicologia Financeira)**")
@@ -100,7 +100,6 @@ if botao_enviar:
                 "satisfacao": satisfacao
             }
             
-            # Envia diretamente para a tabela que você executou no SQL Editor
             supabase.table("movimentacoes").insert(dados_gasto).execute()
             
             st.success("✅ Gravado com sucesso na base de dados em nuvem do Supabase!")
