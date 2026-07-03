@@ -89,11 +89,7 @@ st.sidebar.markdown("---")
 st.sidebar.header("📅 Filtros de Tempo")
 
 hoje = datetime.date.today()
-ano_actual = hoje.year
-mes_actual = hoje.month
-
-lista_anos = [ano_actual, ano_actual - 1, ano_actual + 1]
-ano_selected = st.sidebar.selectbox("Ano de Análise:", lista_anos, index=0)
+ano_selected = st.sidebar.selectbox("Ano de Análise:", [hoje.year, hoje.year - 1, hoje.year + 1], index=0)
 
 lista_meses = {
     1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
@@ -102,7 +98,7 @@ lista_meses = {
 mes_selected_num = st.sidebar.selectbox(
     "Mês de Análise:", list(lista_meses.keys()), 
     format_func=lambda x: lista_meses[x],
-    index=list(lista_meses.keys()).index(mes_actual)
+    index=list(lista_meses.keys()).index(hoje.month)
 )
 
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
@@ -179,7 +175,8 @@ if supabase:
     except Exception as e:
         st.error(f"Erro na validação de segurança: {e}")
 
-divida_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
+# Variável única, limpa e padronizada para todo o escopo do código
+saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
 if not lista_porquinhos_existentes:
@@ -219,9 +216,9 @@ with aba_painel:
     col1.metric(label="Volume Devedor Inicial", value=f"R$ {DIVIDA_TOTAL_INICIAL:,.2f}")
     col2.metric(label="Total Amortizado (Pago)", value=f"R$ {total_pago_divida:,.2f}")
     
-    # CORRIGIDO DEFINITIVAMENTE: Sem redundâncias ou plurais errados nas duas linhas abaixo
-    if divida_restante > 0:
-        col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {divida_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
+    # Aplicação estrita da variável unificada sem condicionais com atribuição oculta
+    if saldo_devedor_restante > 0:
+        col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {saldo_devedor_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
     else:
         col3.metric(label="Saldo Devedor", value="R$ 0,00 🎉", delta="Quitado!")
         
@@ -241,11 +238,11 @@ with aba_painel:
         st.subheader("🧠 Raio-X de Necessidade Real (Mês Filtrado)")
         df_filtrado["Nível Numérico"] = df_filtrado["satisfacao"].astype(str).str[0]
         df_necessidade = df_filtrado.groupby("Nível Numérico")["valor"].sum().reset_index()
-        df_necessidade.columns = ["Nível de Importance", "Total Gasto (R$)"]
+        df_necessidade.columns = ["Nível de Importância", "Total Gasto (R$)"]
         mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
-        df_necessidade["Nível de Importance"] = df_necessidade["Nível de Importance"].map(mapa_nomes)
+        df_necessidade["Nível de Importância"] = df_necessidade["Nível de Importância"].map(mapa_nomes)
         
-        fig_necessidade = px.bar(df_necessidade, y="Nível de Importance", x="Total Gasto (R$)", orientation='h', color="Nível de Importance",
+        fig_necessidade = px.bar(df_necessidade, y="Nível de Importância", x="Total Gasto (R$)", orientation='h', color="Nível de Importância",
                                  color_discrete_map={"🚨 1 - Impulsivo / Evitável": "#FF4B4B", "🟡 2 - Útil / Desejável": "#FFD700", "🟢 3 - Indispensável": "#00FF66"})
         fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_necessidade, use_container_width=True)
@@ -266,7 +263,7 @@ with aba_painel:
         val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=500.0)
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
-        valor = st.number_input("Qual o valor da operation? (R$)", min_value=0.0, step=5.0, format="%.2f")
+        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
         if criando_novo_porquinho:
             tipo = st.radio("Direção configurada automaticamente:", ["Faturamento ou Receita (Entrada)"])
         else:
