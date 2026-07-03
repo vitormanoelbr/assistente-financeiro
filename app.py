@@ -45,7 +45,7 @@ if st.session_state["usuario_logado"] is None:
             if botao_login:
                 if email_login and senha_login:
                     try:
-                        resposta = supabase.auth.sign_with_password({"email": email_login, "password": senha_login})
+                        resposta = supabase.auth.sign_in_with_password({"email": email_login, "password": senha_login})
                         st.session_state["usuario_logado"] = resposta.user.id
                         st.session_state["user_token"] = resposta.session.access_token
                         st.success("🎉 Acesso autorizado! Redirecionando...")
@@ -214,11 +214,12 @@ with aba_painel:
     st.markdown("---")
     
     st.subheader("📊 Painel de Limites Orçamentários")
+    st.markdown("### 🧮 Situação de Dívidas Estruturadas")
     col1, col2, col3 = st.columns(3)
     col1.metric(label="Volume Devedor Inicial", value=f"R$ {DIVIDA_TOTAL_INICIAL:,.2f}")
     col2.metric(label="Total Amortizado (Pago)", value=f"R$ {total_pago_divida:,.2f}")
     
-    # CORRIGIDO: Lógica limpa sem variáveis redundantes ou curtos-circuitos
+    # CORRIGIDO DEFINITIVAMENTE: Sem redundâncias ou NameError
     if divida_restante > 0:
         col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {divida_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
     else:
@@ -240,11 +241,11 @@ with aba_painel:
         st.subheader("🧠 Raio-X de Necessidade Real (Mês Filtrado)")
         df_filtrado["Nível Numérico"] = df_filtrado["satisfacao"].astype(str).str[0]
         df_necessidade = df_filtrado.groupby("Nível Numérico")["valor"].sum().reset_index()
-        df_necessidade.columns = ["Nível de Importância", "Total Gasto (R$)"]
+        df_necessidade.columns = ["Nível de Importance", "Total Gasto (R$)"]
         mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
-        df_necessidade["Nível de Importância"] = df_necessidade["Nível de Importância"].map(mapa_nomes)
+        df_necessidade["Nível de Importance"] = df_necessidade["Nível de Importance"].map(mapa_nomes)
         
-        fig_necessidade = px.bar(df_necessidade, y="Nível de Importância", x="Total Gasto (R$)", orientation='h', color="Nível de Importância",
+        fig_necessidade = px.bar(df_necessidade, y="Nível de Importance", x="Total Gasto (R$)", orientation='h', color="Nível de Importance",
                                  color_discrete_map={"🚨 1 - Impulsivo / Evitável": "#FF4B4B", "🟡 2 - Útil / Desejável": "#FFD700", "🟢 3 - Indispensável": "#00FF66"})
         fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_necessidade, use_container_width=True)
@@ -253,8 +254,6 @@ with aba_painel:
     st.subheader("📥 Registrar Movimentação")
     grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
     opcoes_subcategoria = MAPA_CATEGORIAS[grupo_orcamentario]
-    
-    # CORRIGIDO: String traduzida perfeitamente para português padrão profissional
     categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria, key="sub_filho_main")
 
     criando_novo_porquinho = (categoria == "➕ [Criar Nova Meta / Porquinho]")
