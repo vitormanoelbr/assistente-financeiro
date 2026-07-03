@@ -5,34 +5,32 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Gestor Antifrágil", layout="centered")
 
-# Credenciais integradas diretamente para rodar instantaneamente
-SUPABASE_URL = "https://knqqtoqxrrriefaueiem.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtucXF0b3F4cnJyaWVmYXVlaWVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3NDIwMTgsImV4cCI6MjA4NjMxODAxOH0.u0qscE2D4y43nE5tq5-Qo9hM-YyvLpU68_2GfT16C-Y"
+# Injeção direta e limpa para evitar quebras de string no deploy
+URL_DIRETA = "https://knqqtoqxrrriefaueiem.supabase.co"
+KEY_DIRETA = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtucXF0b3F4cnJyaWVmYXVlaWVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3NDIwMTgsImV4cCI6MjA4NjMxODAxOH0.u0qscE2D4y43nE5tq5-Qo9hM-YyvLpU68_2GfT16C-Y"
 
 @st.cache_resource
-def inicializar_supabase():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+def conectar_banco():
+    return create_client(URL_DIRETA, KEY_DIRETA)
 
 try:
-    supabase: Client = inicializar_supabase()
+    supabase: Client = conectar_banco()
 except Exception as e:
-    st.error(f"Erro ao conectar ao banco de dados: {e}")
+    st.error(f"Falha na conexão estrutural: {e}")
 
-# Cabeçalho do App
+# Interface Principal
 st.title("💸 Novo Lançamento")
 st.subheader("Finanças Pessoais & Orçamento Inteligente")
 st.markdown("---")
 
-with st.form("fluxo_diario", clear_on_submit=True):
-    
+with st.form("formulario_fluxo", clear_on_submit=True):
     valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
     tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
     data_movimento = st.date_input("Data do evento:", datetime.date.today())
-    descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Pensão, Supermercado Big Master, Posto L3...")
+    descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Pensão, Posto L3, Mercado...")
     
     st.markdown("### 🗺️ Alocação no Método 50/30/20")
     
-    # CORRIGIDO: Nome da variável padronizado em todo o arquivo
     grupo_orcamentario = st.selectbox(
         "Selecione o Grupo Estratégico:",
         [
@@ -49,8 +47,7 @@ with st.form("fluxo_diario", clear_on_submit=True):
             "Habitação (Aluguel, Luz, Água, Gás)",
             "Alimentação Básica & Mercado",
             "Saúde, Plano Médico & Farmácia",
-            "Transporte, Combustível & Logística",
-            "Impostos & Taxas Obrigatórias"
+            "Transporte, Combustível & Logística"
         ]
     elif "30% Estilo de Vida" in grupo_orcamentario:
         opcoes_subcategoria = [
@@ -58,7 +55,7 @@ with st.form("fluxo_diario", clear_on_submit=True):
             "Delivery (iFood / Alimentação Conforto)",
             "Vestuário, Compras & Presentes",
             "Estética, Cuidados Pessoais & Academia",
-            "Assinaturas & Entretenimento (Netflix/Spotify)",
+            "Assinaturas & Entretenimento",
             "Viagens & Hobbies"
         ]
     elif "20% Aporte para a Liberdade" in grupo_orcamentario:
@@ -71,23 +68,20 @@ with st.form("fluxo_diario", clear_on_submit=True):
         opcoes_subcategoria = [
             "Ferramentas SaaS & Softwares",
             "Marketing & Anúncios",
-            "Infraestrutura & Custos Operacionais",
-            "Impostos da Empresa"
+            "Infraestrutura & Custos Operacionais"
         ]
         
     categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria)
     
     st.markdown("---")
-    st.markdown("**🧠 Análise de Intencionalidade (Psicologia Financeira)**")
     satisfacao = st.select_slider(
-        "Qual o retorno de bem-estar ou necessidade real deste gasto?",
-        options=["1 - Baixo retorno / Impulsivo", "2 - Moderado / Útil", "3 - Alto retorno / Indispensável"],
-        value="2 - Moderado / Útil"
+        "🧠 Retorno de bem-estar ou necessidade real deste gasto?",
+        options=["1 - Baixo retorno", "2 - Moderado", "3 - Alto retorno"],
+        value="2 - Moderado"
     )
     
     botao_enviar = st.form_submit_button("Registrar Movimentação Real")
 
-# Envio para o Supabase
 if botao_enviar:
     if valor > 0 and descricao:
         try:
@@ -105,20 +99,21 @@ if botao_enviar:
             st.success("✅ Gravado com sucesso na nuvem do Supabase!")
             st.balloons()
         except Exception as e:
-            st.error(f"Erro ao salvar no banco: {e}")
+            st.error(f"Erro na autenticação com o servidor: {e}")
     else:
-        st.warning("Por favor, insira um valor e uma descrição válida.")
+        st.warning("Insira um valor maior que zero e uma descrição válida.")
 
-# CONSULTA EM TEMPO REAL: Mostra os dados inseridos logo abaixo do formulário
+# Seção de histórico corrigida de acordo com a biblioteca padrão
 st.markdown("---")
-st.subheader("📋 Últimos Lançamentos Registrados")
+st.subheader("📋 Últimos Lançamentos")
 try:
-    resposta = supabase.table("movimentacoes").select("data, descricao, grupo_orcamentario, valor").order("id", descending=True).limit(5).execute()
+    # Correção da paginação e ordenação aceita pelo client python
+    resposta = supabase.table("movimentacoes").select("data, descricao, grupo_orcamentario, valor").order("id", desc=True).limit(5).execute()
     if resposta.data:
         df_historico = pd.DataFrame(resposta.data)
-        df_historico.columns = ["Data", "Descrição/Estabelecimento", "Grupo", "Valor (R$)"]
+        df_historico.columns = ["Data", "Descrição", "Grupo", "Valor (R$)"]
         st.dataframe(df_historico, use_container_width=True, hide_index=True)
     else:
-        st.info("Nenhum registro encontrado no banco de dados ainda. Faça o seu primeiro lançamento acima!")
+        st.info("Nenhum registro encontrado. Faça o primeiro lançamento acima!")
 except Exception as e:
-    st.caption(f"Aguardando dados... ({e})")
+    st.caption(f"Aguardando sincronização de dados... ({e})")
