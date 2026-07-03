@@ -219,7 +219,7 @@ with aba_painel:
     col1.metric(label="Volume Devedor Inicial", value=f"R$ {DIVIDA_TOTAL_INICIAL:,.2f}")
     col2.metric(label="Total Amortizado (Pago)", value=f"R$ {total_pago_divida:,.2f}")
     
-    # CORRIGIDO DEFINITIVAMENTE: Sem redundâncias ou NameError
+    # CORRIGIDO DEFINITIVAMENTE: Sem redundâncias ou plurais errados nas duas linhas abaixo
     if divida_restante > 0:
         col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {divida_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
     else:
@@ -266,7 +266,7 @@ with aba_painel:
         val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=500.0)
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
-        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
+        valor = st.number_input("Qual o valor da operation? (R$)", min_value=0.0, step=5.0, format="%.2f")
         if criando_novo_porquinho:
             tipo = st.radio("Direção configurada automaticamente:", ["Faturamento ou Receita (Entrada)"])
         else:
