@@ -9,6 +9,7 @@ st.title("📊 Assistente Financeiro Vitor Manoel")
 st.subheader("Inteligência Orçamentária | Banco Inter")
 st.markdown("---")
 
+# 1. REGRAS DE CATEGORIZAÇÃO
 REGRAS_ORCAMENTO = {
     'ATACADAO': ('Mercado', '50% Essencial'),
     'BIG MASTE': ('Mercado', '50% Essencial'),
@@ -39,42 +40,52 @@ REGRAS_ORCAMENTO = {
 def classificar_transacao(descricao):
     for termo, (categoria, grupo) in REGRAS_ORCAMENTO.items():
         if re.search(termo, descricao, re.IGNORECASE):
-            return categoria, grupo
+            return category, grupo
     return 'Outros', 'A Classificar por IA'
 
+# 2. INTERFACE DE UPLOAD
 st.sidebar.header("📥 Alimentar o Assistente")
 arquivo_carregado = st.sidebar.file_uploader("Suba o CSV do Banco Inter aqui:", type=["csv"])
 
 if arquivo_carregado is not None:
     try:
-        # Lendo o CSV do Inter tratando o formato de moeda brasileiro
+        # Leitura direta tratando formato decimal brasileiro
         df_bruto = pd.read_csv(arquivo_carregado, sep=';', encoding='utf-8', decimal=',', thousands='.')
         df_bruto.columns = [col.strip() for col in df_bruto.columns]
         
-        # Mapeamento robusto: tenta por nome, se falhar pega pela posição física das colunas
+        # Mapeamento robusto por ordem física das colunas caso o nome mude
         try:
             col_data = [c for c in df_bruto.columns if 'data' in c.lower()][0]
         except IndexError:
-            col_data = df_bruto.columns[0] # Pega a primeira coluna se não achar pelo nome
+            col_data = df_bruto.columns[0]
             
         try:
             col_desc = [c for c in df_bruto.columns if 'desc' in c.lower() or 'historico' in c.lower()][0]
         except IndexError:
-            col_desc = df_bruto.columns[1] # Pega a segunda coluna
+            col_desc = df_bruto.columns[1]
             
         try:
             col_valor = [c for c in df_bruto.columns if 'valor' in c.lower()][0]
         except IndexError:
-            col_valor = df_bruto.columns[2] # Pega a terceira coluna
+            col_valor = df_bruto.columns[2]
         
         df = pd.DataFrame({
             'Data': df_bruto[col_data],
             'Descricao': df_bruto[col_desc],
             'Valor': df_bruto[col_valor]
         })
+        
+        df['Categoria'], df['Grupo_Orcamentario'] = zip(*df['Descricao'].apply(classificar_transacao))
+        df_despesas = df[(df['Valor'] < 0) & (~df['Grupo_Orcamentario'].isin(['Movimentação Interna', 'Descontinuado']))].copy()
+        df_despesas['Valor_Absoluto'] = df_despesas['Valor'].abs()
+        
+        # Cálculos de Métricas
+        total_essencial = df_despesas[df_despesas['Grupo_Orcamentario'] == '50% Essencial']['Valor_Absoluto'].sum()
+        total_estilo = df_despesas[df_despesas['Grupo_Orcamentario'] == '30% Estilo de Vida']['Valor_Absoluto'].sum()
         total_negocio = df_despesas[df_despesas['Grupo_Orcamentario'] == 'Custos de Negócio']['Valor_Absoluto'].sum()
         total_geral = df_despesas['Valor_Absoluto'].sum()
         
+        # Exibição das Métricas
         st.metric(label="🔴 50% Essencial Total", value=f"R$ {total_essencial:,.2f}")
         st.metric(label="🟡 30% Estilo de Vida Total", value=f"R$ {total_estilo:,.2f}")
         st.metric(label="💼 Custos de Negócio", value=f"R$ {total_negocio:,.2f}")
