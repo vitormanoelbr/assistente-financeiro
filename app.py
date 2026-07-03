@@ -34,12 +34,12 @@ df_todos_dados = pd.DataFrame()
 
 if supabase:
     try:
-        resposta_completa = supabase.table("movimentacoes").select("valor, grupo_orcamentario, subcategoria, satisfacao").execute()
-        if resposta_completa.data:
-            df_todos_dados = pd.DataFrame(resposta_completa.data)
+        resposta_completa = supabase.table("movimentacoes").select("id, data, descricao, grupo_orcamentario, subcategoria, valor, satisfacao").execute()
+        if res_data := resposta_completa.data:
+            df_todos_dados = pd.DataFrame(res_data)
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             
-            for item in resposta_completa.data:
+            for item in res_data:
                 val = float(item["valor"])
                 grupo = item["grupo_orcamentario"]
                 
@@ -47,7 +47,7 @@ if supabase:
                     gastos_essencial += val
                 elif "30% Estilo de Vida" in grupo:
                     gastos_estilo += val
-                elif "20% Aporte" in grupo:
+                elif "20% Aporte" in group:
                     gastos_aporte += val
                 elif "📋 Quitação de Dívidas" in grupo:
                     total_pago_divida += val
@@ -91,12 +91,11 @@ perc_aporte = min(gastos_aporte / META_APORTE, 1.0) if META_APORTE > 0 else 0.0
 st.write(f"🚀 **Futuro & Liberdade (Aportes):** R$ {gastos_aporte:,.2f} de R$ {META_APORTE:,.2f}")
 st.progress(perc_aporte)
 
-# --- SEÇÃO DE GRÁFICOS ANALÍTICOS (CORRIGIDA) ---
+# --- SEÇÃO DE GRÁFICOS ANALÍTICOS ---
 if not df_todos_dados.empty:
     st.markdown("---")
     st.markdown("### 📈 Análise Visual do Dinheiro")
     
-    # Gráfico 1: Distribuição por Volume Financeiro (R$)
     df_agrupado = df_todos_dados.groupby("grupo_orcamentario")["valor"].sum().reset_index()
     fig_rosca = px.pie(
         df_agrupado, 
@@ -109,7 +108,6 @@ if not df_todos_dados.empty:
     fig_rosca.update_layout(showlegend=False)
     st.plotly_chart(fig_rosca, use_container_width=True)
     
-    # Gráfico 2: Raio-X por Volume de Dinheiro (R$) corrigindo duplicidade de strings antigas
     df_todos_dados["Nível Limpo"] = df_todos_dados["satisfacao"].astype(str).str[0]
     df_satisfacao = df_todos_dados.groupby("Nível Limpo")["valor"].sum().reset_index()
     df_satisfacao.columns = ["Nível de Necessidade", "Total Gasto (R$)"]
@@ -133,7 +131,7 @@ if not df_todos_dados.empty:
 
 st.markdown("---")
 
-# FORMULÁRIO
+# FORMULÁRIO COM SUBATEGORIAS CORRIGIDAS
 st.subheader("📥 Registrar Movimentação")
 with st.form("formulario_fluxo", clear_on_submit=True):
     valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
@@ -152,21 +150,22 @@ with st.form("formulario_fluxo", clear_on_submit=True):
         ]
     )
     
+    # Subcategorias refinadas baseadas na realidade prática
     if "50% Essencial" in grupo_orcamentario:
-        opcoes_subcategoria = ["Habitação", "Alimentação Básica", "Saúde", "Transporte", "Pensão / Obrigações"]
+        opcoes_subcategoria = ["Alimentação Básica & Mercado", "Contas Fixas (Luz, Água, Internet)", "Habitação (Aluguel / Financiamento)", "Saúde & Medicamentos", "Transporte & Combustível", "Pensão / Obrigações Legais"]
     elif "30% Estilo de Vida" in grupo_orcamentario:
-        opcoes_subcategoria = ["Lazer, Bares & Restaurantes", "Delivery / iFood", "Vestuário & Compras", "Cuidados Pessoais"]
+        opcoes_subcategoria = ["Lazer, Bares & Restaurantes", "Delivery / iFood / Conforto", "Vestuário, Compras & Presentes", "Estética, Cuidados & Academia", "Viagens & Hobbies", "Assinaturas (Netflix, Spotify)"]
     elif "20% Aporte" in grupo_orcamentario:
-        opcoes_subcategoria = ["Reserva de Autonomia", "Aportes Renda Fixa/Variável"]
+        opcoes_subcategoria = ["Reserva de Autonomia (Emergência)", "Aportes Renda Fixa", "Aportes Renda Variável"]
     elif "Quitação de Dívidas" in grupo_orcamentario:
-        opcoes_subcategoria = ["Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos"]
+        opcoes_subcategoria = ["Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens"]
     else:
-        opcoes_subcategoria = ["Ferramentas & Softwares", "Marketing", "Custos Operacionais"]
+        opcoes_subcategoria = ["Ferramentas SaaS & Softwares", "Marketing & Anúncios", "Infraestrutura & Custos Operacionais"]
         
     categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria)
     
     satisfacao = st.select_slider(
-        "🧠 Nível de necessidade real deste gasto?",
+        "🧠 Nível de necessidade real deste evento?",
         options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"],
         value="2 - Útil / Desejável"
     )
@@ -191,17 +190,51 @@ if botao_enviar and supabase:
         except Exception as e:
             st.error(f"Erro ao salvar: {e}")
 
-# HISTÓRICO RECENTE
+# --- GERENCIADOR INTERATIVO (EDITAR / APAGAR) ---
 st.markdown("---")
-st.subheader("📋 Últimos Lançamentos Registrados")
-if supabase:
-    try:
-        resposta = supabase.table("movimentacoes").select("data, descricao, grupo_orcamentario, valor").order("id", desc=True).limit(5).execute()
-        if resposta.data:
-            df_historico = pd.DataFrame(resposta.data)
-            df_historico.columns = ["Data", "Descrição", "Grupo", "Valor (R$)"]
-            st.dataframe(df_historico, use_container_width=True, hide_index=True)
-        else:
-            st.info("Nenhum registro encontrado.")
-    except Exception as e:
-        st.caption(f"Sincronizando...")
+st.subheader("📋 Gerenciar Lançamentos Registrados")
+st.caption("💡 Dica: Dê duplo clique em qualquer célula para alterar o valor ou texto. Para apagar uma linha, selecione-a e aperte Delete.")
+
+if supabase and not df_todos_dados.empty:
+    # Seleciona colunas úteis para exibição e edição na planilha interativa
+    df_editor = df_todos_dados[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor"]].copy()
+    df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)"]
+    
+    # Renderiza a planilha interativa na tela do Streamlit
+    dados_editados = st.data_editor(
+        df_editor, 
+        use_container_width=True, 
+        hide_index=True,
+        disabled=["ID"], # Protege o ID único do banco de dados contra alterações acidentais
+        num_rows="dynamic" # Permite que o usuário remova linhas usando a interface
+    )
+    
+    # Processa as alterações se o usuário modificar ou apagar dados da planilha
+    if st.button("💾 Salvar Alterações da Tabela"):
+        try:
+            # 1. Detectar linhas deletadas
+            linhas_atuais_ids = set(dados_editados["ID"].tolist())
+            linhas_originais_ids = set(df_editor["ID"].tolist())
+            ids_deletados = linhas_originais_ids - linhas_atuais_ids
+            
+            for id_del in ids_deletados:
+                supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
+                
+            # 2. Detectar modificações nas linhas existentes
+            for _, row in dados_editados.iterrows():
+                row_id = int(row["ID"])
+                # Pega a linha correspondente original para comparar
+                orig_row = df_editor[df_editor["ID"] == row_id].iloc[0]
+                
+                if (row["Descrição"] != orig_row["Descrição"]) or (float(row["Valor (R$)"]) != float(orig_row["Valor (R$)"])):
+                    supabase.table("movimentacoes").update({
+                        "descricao": row["Descrição"],
+                        "valor": float(row["Valor (R$)"])
+                    }).eq("id", row_id).execute()
+                    
+            st.success("🔄 Banco de dados sincronizado com sucesso!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao sincronizar edições: {e}")
+elif df_todos_dados.empty:
+    st.info("Nenhum registro encontrado.")
