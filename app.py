@@ -51,7 +51,6 @@ mes_selected_num = st.sidebar.selectbox(
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
 # --- PROCESSAMENTO LÓGICO DE DADOS ---
-# Metas do método base
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE_MENSAL = RENDA_BASE * 0.20           
@@ -188,7 +187,6 @@ with aba_painel:
         st.subheader("🧠 Raio-X de Necessidade Real (Mês Filtrado)")
         
         df_filtrado["Nível Numérico"] = df_filtrado["satisfacao"].astype(str).str[0]
-        # Correção da variável fixa de agrupamento
         df_necessidade_real = df_filtrado.groupby("Nível Numérico")["valor"].sum().reset_index()
         df_necessidade_real.columns = ["Nível de Importância", "Total Gasto (R$)"]
         
@@ -197,10 +195,10 @@ with aba_painel:
             "2": "🟡 2 - Útil / Desejável", 
             "3": "🟢 3 - Indispensável"
         }
-        df_necessidade_real["Nível de Importância"] = df_necessidade_real["Nível de Importance"].map(mapa_nomes)
+        df_necessidade_real["Nível de Importância"] = df_necessidade_real["Nível de Importância"].map(mapa_nomes)
         
         fig_necessidade = px.bar(
-            df_necessidade_real, # Variável perfeitamente mapeada aqui
+            df_necessidade_real, 
             y="Nível de Importância",
             x="Total Gasto (R$)",
             orientation='h',
@@ -218,7 +216,6 @@ with aba_painel:
     # FORMULÁRIO DE REGISTRO
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação")
-    
     grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
     opcoes_subcategoria = MAPA_CATEGORIAS[grupo_orcamentario]
     categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria, key="sub_filho_main")
