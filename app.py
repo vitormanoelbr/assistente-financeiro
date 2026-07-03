@@ -49,48 +49,41 @@ arquivo_carregado = st.sidebar.file_uploader("Suba o CSV do Banco Inter aqui:", 
 
 if arquivo_carregado is not None:
     try:
-        # Lê o conteúdo bruto do arquivo para limpar o cabeçalho do banco na força bruta
+        # Lê o conteúdo bruto
         conteudo_bruto = arquivo_carregado.read().decode('utf-8', errors='ignore')
         linhas = conteudo_bruto.splitlines()
         
-        # Filtra e mantém apenas as linhas que têm dados reais (que contêm o caractere divisor do CSV)
-        linhas_uteis_separador = [l for l in linhas if ';' in l or ',' in l]
+        # Encontra a linha exata onde começa a tabela do Inter
+        linha_inicio_tabela = 0
+        for i, linha in enumerate(linhas):
+            if 'data lançamento' in linha.lower():
+                linha_inicio_tabela = i
+                break
+                
+        # Mantém apenas a tabela pulando o cabeçalho de informações da conta
+        linhas_tabela = linhas[linha_inicio_tabela:]
+        arquivo_limpo = io.StringIO('\n'.join(linhas_tabela))
         
-        # Reconstrói o arquivo virtual pronto para o Pandas
-        arquivo_limpo = io.StringIO('\n'.join(linhas_uteis_separador))
-        
-        # Identifica se o arquivo usa ponto e vírgula ou vírgula
-        primeira_linha = linhas_uteis_separador[0] if linhas_uteis_separador else ""
-        separador = ';' if ';' in primeira_linha else ','
-        
-        # Faz a leitura do arquivo limpo sem usar o parâmetro skiprows que estava quebrando
-        if separador == ';':
-            df_bruto = pd.read_csv(arquivo_limpo, sep=';', decimal=',', thousands='.')
-        else:
-            df_bruto = pd.read_csv(arquivo_limpo, sep=',', decimal='.', thousands=',')
-            
+        # Lê o CSV sabendo que o separador do seu arquivo é o ';'
+        df_bruto = pd.read_csv(arquivo_limpo, sep=';', decimal=',', thousands='.')
         df_bruto.columns = [col.strip() for col in df_bruto.columns]
         
-        # Identificação de colunas por posição física para ignorar nomes alterados
-        col_data = df_bruto.columns[0]
-        col_desc = df_bruto.columns[1]
-        col_valor = df_bruto.columns[2]
-        
+        # Puxa os dados das colunas reais do seu arquivo: 'Data Lançamento', 'Descrição', 'Valor'
         df = pd.DataFrame()
-        df['Data'] = df_bruto[col_data]
-        df['Descricao'] = df_bruto[col_desc]
+        df['Data'] = df_bruto['Data Lançamento']
+        df['Descricao'] = df_bruto['Descrição']
         
-        # Limpeza pesada na coluna de valores para evitar quebras por strings
-        valores_limpos = df_bruto[col_valor].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
+        # Limpeza e conversão do Valor
+        valores_limpos = df_bruto['Valor'].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
         df['Valor'] = pd.to_numeric(valores_limpos, errors='coerce')
         
-        # Classificação automática
+        # Aplicar regras de negócio e categorização
         res_classif = df['Descricao'].apply(classificar_transacao)
         df['Categoria'] = [r[0] for r in res_classif]
         df['Grupo_Orcamentario'] = [r[1] for r in res_classif]
         
-        # Separa apenas as despesas legítimas
-        df_despesas = df[~df['Grupo_Orcamentario'].isin(['Movimentação Interna', 'Descontinuado'])].copy()
+        # Filtra apenas o que for despesa (Valores negativos) tirando as movimentações internas
+        df_despesas = df[(df['Valor'] < 0) & (~df['Grupo_Orcamentario'].isin(['Movimentação Interna', 'Descontinuado']))].copy()
         df_despesas['Valor_Absoluto'] = df_despesas['Valor'].abs()
         
         if not df_despesas.empty:
@@ -119,9 +112,9 @@ if arquivo_carregado is not None:
             df_exibicao['Valor'] = df_exibicao['Valor'].map("R$ {:,.2f}".format)
             st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
         else:
-            st.warning("Nenhum dado financeiro de despesa pôde ser extraído deste arquivo.")
+            st.warning("Nenhuma despesa (valor negativo) encontrada no arquivo.")
                 
     except Exception as e:
         st.error(f"Erro ao processar estrutura do arquivo: {e}")
 else:
-    st.info("👋 Olá Vitor! O sistema está pronto. Vá no app do Banco Inter, exporte seu extrato em formato CSV e faça o upload aqui para ativar os seus gráficos reais.")
+    st.info("👋 Olá Vitor! O sistema está pronto. Suba seu extrato do Inter em formato CSV para ativar seus gráficos reais.")
