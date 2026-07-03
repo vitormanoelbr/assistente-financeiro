@@ -3,9 +3,9 @@ import datetime
 import pandas as pd
 from supabase import create_client, Client
 
-st.set_page_config(page_title="Gestor Antifrágil", layout="centered")
+st.set_page_config(page_title="Meu Planner Financeiro", layout="centered")
 
-# Credenciais REAIS do seu banco
+# Credenciais do banco
 SUPABASE_URL = "https://knqqtoqxrrriefaueiem.supabase.co"
 SUPABASE_KEY = "sb_publishable_BBxr66whvy4OFWdQxLs1Vw_KnMC_wmq"
 
@@ -18,79 +18,100 @@ try:
 except Exception as e:
     st.error(f"Falha na conexão estrutural: {e}")
 
-# --- INTELIGÊNCIA DE LIMITES (SIMULAÇÃO BASEADA NA SUA IDÉIA) ---
-RENDA_SIMULADA = 2500.00
-LIMITE_ESSENCIAL = RENDA_SIMULADA * 0.50  # R$ 1250
-LIMITE_ESTILO_DE_VIDA = RENDA_SIMULADA * 0.30  # R$ 750
-META_APORTE = RENDA_SIMULADA * 0.20  # R$ 500
+# --- CONFIGURAÇÃO FIXA REQUISITADA ---
+RENDA_FIXA = 2500.00
+LIMITE_ESSENCIAL = RENDA_FIXA * 0.50       # R$ 1250
+LIMITE_ESTILO_DE_VIDA = RENDA_FIXA * 0.30  # R$ 750
+META_APORTE = RENDA_FIXA * 0.20           # R$ 500
 
-# Buscar gastos reais do banco para calcular o Dashboard dinâmico
+# Meta de simulação de Dívida Total (para análise visual de quitação)
+DIVIDA_TOTAL_INICIAL = 5000.00 
+
+# Inicialização de somadores
 gastos_essencial = 0.0
 gastos_estilo = 0.0
 gastos_aporte = 0.0
+total_pago_divida = 0.0
 
 if supabase:
     try:
-        # Puxa todas as movimentações para somar os limites na tela
         dados_banco = supabase.table("movimentacoes").select("valor, grupo_orcamentario").execute()
         if dados_banco.data:
             for item in dados_banco.data:
                 val = float(item["valor"])
                 grupo = item["grupo_orcamentario"]
+                
                 if "50% Essencial" in grupo:
                     gastos_essencial += val
                 elif "30% Estilo de Vida" in grupo:
                     gastos_estilo += val
                 elif "20% Aporte" in grupo:
                     gastos_aporte += val
+                elif "📋 Quitação de Dívidas" in grupo:
+                    total_pago_divida += val
     except Exception as e:
         pass
 
-# --- INTERFACE DO USUÁRIO ---
-st.title("💸 Gestor Antifrágil 50/30/20")
-st.markdown(f"**Orçamento Mensal Base:** R$ {RENDA_SIMULADA:,.2f}")
+# Restante da dívida a ser paga
+divida_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
+
+# --- INTERFACE CORRIGIDA ---
+st.title("📲 Meu Planner Financeiro")
+st.markdown(f"**Orçamento Mensal Base:** R$ {RENDA_FIXA:,.2f}")
 st.markdown("---")
 
-# DASHBOARD DE METAS E LIMITES (Aparece no topo para decisão rápida)
+# PAINEL DE LIMITES E REALIDADE FINANCEIRA
 st.subheader("📊 Painel de Limites Orçamentários")
 
-# 1. Limite Essencial (50%)
+# 1. Termômetro de Dívidas (Nova Seção Estratégica)
+st.markdown("### 🧮 Situação de Dívidas Atuais")
+col1, col2 = st.columns(2)
+col1.metric(label="Dívida Restante", value=f"R$ {divida_restante:,.2f}")
+col2.metric(label="Total Amortizado/Pago", value=f"R$ {total_pago_divida:,.2f}")
+
+perc_divida_paga = min(total_pago_divida / DIVIDA_TOTAL_INICIAL, 1.0) if DIVIDA_TOTAL_INICIAL > 0 else 1.0
+st.progress(perc_divida_paga)
+st.caption(f"Você já liquidou **{perc_divida_paga * 100:.1f}%** do volume total das suas dívidas estruturadas.")
+
+st.markdown("---")
+st.markdown("### 🧭 Distribuição do Mês")
+
+# 2. Limite Essencial
 perc_essencial = min(gastos_essencial / LIMITE_ESSENCIAL, 1.0) if LIMITE_ESSENCIAL > 0 else 0.0
-st.write(f"🔴 **50% Essencial:** Gastou R$ {gastos_essencial:,.2f} de R$ {LIMITE_ESSENCIAL:,.2f}")
+st.write(f"🔴 **Gasto Essencial Atual:** R$ {gastos_essencial:,.2f} de R$ {LIMITE_ESSENCIAL:,.2f}")
 st.progress(perc_essencial)
 if gastos_essencial > LIMITE_ESSENCIAL:
-    st.error("⚠️ Alerta: Você ultrapassou o seu limite Essencial!")
+    st.warning("⚠️ **Análise de Realidade:** O custo essencial estourou os 50%. Isso sinaliza que sua estrutura fixa está pesada para a renda atual.")
 
-# 2. Limite Estilo de Vida / Lazer (30%)
+# 3. Limite Estilo de Vida
 perc_estilo = min(gastos_estilo / LIMITE_ESTILO_DE_VIDA, 1.0) if LIMITE_ESTILO_DE_VIDA > 0 else 0.0
-st.write(f"🟡 **30% Estilo de Vida (Lazer/Consumo):** Gastou R$ {gastos_estilo:,.2f} de R$ {LIMITE_ESTILO_DE_VIDA:,.2f}")
+st.write(f"🟡 **Estilo de Vida & Lazer:** Gastou R$ {gastos_estilo:,.2f} de R$ {LIMITE_ESTILO_DE_VIDA:,.2f}")
 st.progress(perc_estilo)
-if gastos_estilo > LIMITE_ESTILO_DE_VIDA:
-    st.error("🚨 Atenção: Limite de Lazer/Estilo de Vida estourado! Segure os gastos operacionais.")
-elif gastos_estilo == 0:
-    st.info("✅ Você ainda não utilizou nada do seu limite de Estilo de Vida/Lazer.")
+if gastos_estilo == 0:
+    st.info("✅ Margem de Estilo de Vida preservada (R$ 0,00 utilizados).")
 
-# 3. Meta de Aportes (20%)
+# 4. Meta de Aportes
 perc_aporte = min(gastos_aporte / META_APORTE, 1.0) if META_APORTE > 0 else 0.0
-st.write(f"🚀 **20% Meta de Aporte (Liberdade):** Guardou R$ {gastos_aporte:,.2f} de R$ {META_APORTE:,.2f}")
+st.write(f"🚀 **Futuro & Liberdade (Aportes):** R$ {gastos_aporte:,.2f} de R$ {META_APORTE:,.2f}")
 st.progress(perc_aporte)
 
 st.markdown("---")
 
-# FORMULÁRIO DE LANÇAMENTO
-st.subheader("📥 Novo Lançamento Diário")
+# FORMULÁRIO ADAPTADO
+st.subheader("📥 Registrar Movimentação")
 with st.form("formulario_fluxo", clear_on_submit=True):
     valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
     tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
     data_movimento = st.date_input("Data do evento:", datetime.date.today())
-    descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Mercado, Lazer Final de Semana, Academia...")
+    descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Parcela do Empréstimo, Mercado, Luz...")
     
     grupo_orcamentario = st.selectbox(
-        "Selecione o Grupo Estratégico:",
+        "Destinação Estratégica do Valor:",
         [
             "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", 
             "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)", 
             "🚀 20% Aporte para a Liberdade (Investimentos e Futuro)",
+            "📋 Quitação de Dívidas (Amortizações e Acordos)",
             "💼 Custos de Negócio (Projetos e Clínica)"
         ]
     )
@@ -98,21 +119,23 @@ with st.form("formulario_fluxo", clear_on_submit=True):
     if "50% Essencial" in grupo_orcamentario:
         opcoes_subcategoria = ["Habitação", "Alimentação Básica", "Saúde", "Transporte", "Pensão / Obrigações"]
     elif "30% Estilo de Vida" in grupo_orcamentario:
-        opcoes_subcategoria = ["Lazer, Bares & Restaurantes", "Delivery / iFood", "Vestuário & Compras", "Cuidados Pessoais", "Viagens & Hobbies"]
+        opcoes_subcategoria = ["Lazer, Bares & Restaurantes", "Delivery / iFood", "Vestuário & Compras", "Cuidados Pessoais"]
     elif "20% Aporte" in grupo_orcamentario:
-        opcoes_subcategoria = ["Reserva de Autonomia", "Aportes Renda Fixa/Variável", "Previdência"]
+        opcoes_subcategoria = ["Reserva de Autonomia", "Aportes Renda Fixa/Variável"]
+    elif "Quitação de Dívidas" in grupo_orcamentario:
+        opcoes_subcategoria = ["Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos", "Outros Acordos"]
     else:
         opcoes_subcategoria = ["Ferramentas & Softwares", "Marketing", "Custos Operacionais"]
         
     categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria)
     
     satisfacao = st.select_slider(
-        "🧠 Retorno de bem-estar deste gasto?",
-        options=["1 - Baixo retorno", "2 - Moderado", "3 - Alto retorno"],
-        value="2 - Moderado"
+        "🧠 Nível de necessidade real deste evento?",
+        options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"],
+        value="2 - Útil / Desejável"
     )
     
-    botao_enviar = st.form_submit_button("Registrar Movimentação Real")
+    botao_enviar = st.form_submit_button("Salvar Lançamento")
 
 if botao_enviar and supabase:
     if valor > 0 and descricao:
@@ -127,22 +150,22 @@ if botao_enviar and supabase:
                 "satisfacao": satisfacao
             }
             supabase.table("movimentacoes").insert(dados_gasto).execute()
-            st.success("✅ Gravado com sucesso! Atualizando painel...")
-            st.rerun()  # Recarrega a página para atualizar o progresso das barras na hora
+            st.success("✅ Atualizado com sucesso!")
+            st.rerun()
         except Exception as e:
             st.error(f"Erro ao salvar: {e}")
 
-# SEÇÃO DE HISTÓRICO
+# HISTÓRICO RECENTE
 st.markdown("---")
 st.subheader("📋 Últimos Lançamentos Registrados")
 if supabase:
     try:
         resposta = supabase.table("movimentacoes").select("data, descricao, grupo_orcamentario, valor").order("id", desc=True).limit(5).execute()
-        if resposta.data:
+        if respuesta.data:
             df_historico = pd.DataFrame(resposta.data)
             df_historico.columns = ["Data", "Descrição", "Grupo", "Valor (R$)"]
             st.dataframe(df_historico, use_container_width=True, hide_index=True)
         else:
             st.info("Nenhum registro encontrado.")
     except Exception as e:
-        st.caption(f"Aguardando dados...")
+        st.caption(f"Sincronizando...")
