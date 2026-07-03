@@ -48,28 +48,39 @@ arquivo_carregado = st.sidebar.file_uploader("Suba o CSV do Banco Inter aqui:", 
 
 if arquivo_carregado is not None:
     try:
-        # Leitura direta tratando formato decimal brasileiro
-        df_bruto = pd.read_csv(arquivo_carregado, sep=';', encoding='utf-8', decimal=',', thousands='.')
+        # Tenta ler primeiro com ';' (padrão Inter Web)
+        try:
+            df_bruto = pd.read_csv(arquivo_carregado, sep=';', encoding='utf-8', decimal=',', thousands='.')
+            if len(df_bruto.columns) < 3:
+                raise ValueError
+        except:
+            # Se falhar ou ler errado, tenta com ',' (padrão Inter App)
+            arquivo_carregado.seek(0)
+            df_bruto = pd.read_csv(arquivo_carregado, sep=',', encoding='utf-8', decimal='.', thousands=',')
+        
         df_bruto.columns = [col.strip() for col in df_bruto.columns]
         
-        # Mapeamento por ordem física das colunas para evitar erros de nomes
+        # Identificação dinâmica de colunas por eliminação
         col_data = df_bruto.columns[0]
         col_desc = df_bruto.columns[1]
         col_valor = df_bruto.columns[2]
         
-        df = pd.DataFrame({
-            'Data': df_bruto[col_data],
-            'Descricao': df_bruto[col_desc],
-            'Valor': df_bruto[col_valor]
-        })
+        # Criar dataframe limpo convertendo valores para numérico puro
+        df = pd.DataFrame()
+        df['Data'] = df_bruto[col_data]
+        df['Descricao'] = df_bruto[col_desc]
         
-        # Aplicar classificação
+        # Limpeza pesada no campo de valor para garantir que vire número absoluto
+        valores_limpos = df_bruto[col_valor].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
+        df['Valor'] = pd.to_numeric(valores_limpos, errors='coerce')
+        
+        # Se os valores vieram positivos por padrão no extrato novo do Inter, tratamos depois
         res_classif = df['Descricao'].apply(classificar_transacao)
         df['Categoria'] = [r[0] for r in res_classif]
         df['Grupo_Orcamentario'] = [r[1] for r in res_classif]
         
-        # Filtrar apenas saídas legítimas (valores negativos)
-        df_despesas = df[(df['Valor'] < 0) & (~df['Grupo_Orcamentario'].isin(['Movimentação Interna', 'Descontinuado']))].copy()
+        # Remove movimentações internas
+        df_despesas = df[~df['Grupo_Orcamentario'].isin(['Movimentação Interna', 'Descontinuado'])].copy()
         df_despesas['Valor_Absoluto'] = df_despesas['Valor'].abs()
         
         if not df_despesas.empty:
@@ -79,7 +90,7 @@ if arquivo_carregado is not None:
             total_negocio = df_despesas[df_despesas['Grupo_Orcamentario'] == 'Custos de Negócio']['Valor_Absoluto'].sum()
             total_geral = df_despesas['Valor_Absoluto'].sum()
             
-            # Exibição das Métricas em formato de cartões limpos
+            # Exibição das Métricas
             st.metric(label="🔴 50% Essencial Total", value=f"R$ {total_essencial:,.2f}")
             st.metric(label="🟡 30% Estilo de Vida Total", value=f"R$ {total_estilo:,.2f}")
             st.metric(label="💼 Custos de Negócio", value=f"R$ {total_negocio:,.2f}")
@@ -100,9 +111,9 @@ if arquivo_carregado is not None:
             df_exibicao['Valor'] = df_exibicao['Valor'].map("R$ {:,.2f}".format)
             st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
         else:
-            st.warning("Nenhuma despesa válida (valor negativo) foi encontrada no arquivo submetido.")
+            st.warning("Nenhum dado financeiro pôde ser extraído deste arquivo.")
                 
     except Exception as e:
-        st.error("Erro ao processar os dados do arquivo. Verifique se o arquivo importado é o CSV correto emitido pelo banco.")
+        st.error(f"Erro ao processar estrutura do arquivo: {e}")
 else:
     st.info("👋 Olá Vitor! O sistema está pronto. Vá no app do Banco Inter, exporte seu extrato em formato CSV e faça o upload aqui para ativar os seus gráficos reais.")
