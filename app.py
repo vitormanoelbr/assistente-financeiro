@@ -23,28 +23,27 @@ try:
 except Exception as e:
     st.error(f"Falha na conexão estrutural: {e}")
 
-# --- ⚙️ MENU LATERAL DE CONFIGURAÇÕES E PARÂMETROS (SIDEBAR) ---
+# --- ⚙️ MENU LATERAL DE CONFIGURAÇÕES (SIDEBAR) ---
 st.sidebar.header("⚙️ Configurações do Perfil")
 RENDA_BASE = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=2500.00, step=100.0)
-DIVIDA_TOTAL_INICIAL_MANUAL = st.sidebar.number_input("Ajuste Manual de Dívida Total (R$):", min_value=0.0, value=0.0, step=100.0, help="Deixe 0 se preferir registrar a dívida via lançamentos de Entrada.")
 
 st.sidebar.markdown("---")
 st.sidebar.header("🎯 Metas de Investimento (Porquinhos)")
-st.sidebar.caption("Defina seus grandes objetivos de acumulação de patrimônio.")
+st.sidebar.caption("Defina os objetivos para onde quer direcionar os seus aportes.")
 
-# Criação dinâmica de porquinhos gerenciáveis pelo usuário
-nome_meta_1 = st.sidebar.text_input("Objetivo 1:", value="Reserva de Emergência")
-valor_meta_1 = st.sidebar.number_input("Valor Alvo Objetivo 1 (R$):", min_value=0.0, value=5000.00, step=500.0)
+# Criação de Porquinhos customizáveis pelo usuário
+nome_fundo_1 = st.sidebar.text_input("Nome do Objetivo 1:", value="Reserva de Emergência")
+alvo_fundo_1 = st.sidebar.number_input("Valor Alvo do Objetivo 1 (R$):", min_value=0.0, value=5000.00, step=500.0)
 
-nome_meta_2 = st.sidebar.text_input("Objetivo 2:", value="Comprar Carro")
-valor_meta_2 = st.sidebar.number_input("Valor Alvo Objetivo 2 (R$):", min_value=0.0, value=80000.00, step=1000.0)
+nome_fundo_2 = st.sidebar.text_input("Nome do Objetivo 2:", value="Comprar Carro")
+alvo_fundo_2 = st.sidebar.number_input("Valor Alvo do Objetivo 2 (R$):", min_value=0.0, value=80000.00, step=1000.0)
 
 st.sidebar.markdown("---")
-st.sidebar.header("📅 Filtros de Tempo")
+st.sidebar.header("📅 Filtros de Tempo (Painel Mensal)")
 
 hoje = datetime.date.today()
 ano_atual = hoje.year
-mes_atual = manager_month = hoje.month
+mes_atual = hoje.month
 
 lista_anos = [ano_atual, ano_atual - 1, ano_atual + 1]
 ano_selecionado = st.sidebar.selectbox("Ano de Análise:", lista_anos, index=0)
@@ -60,22 +59,20 @@ mes_selecionado_num = st.sidebar.selectbox(
     index=list(lista_meses.keys()).index(mes_atual)
 )
 
-janela_tempo = st.sidebar.radio("Visualizar intervalo:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
+janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
-# --- PROCESSAMENTO DOS DADOS DO BANCO ---
+# --- PROCESSAMENTO LOGÍCO DE DADOS ---
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
-META_APORTE = RENDA_BASE * 0.20           
+META_APORTE_MENSAL = RENDA_BASE * 0.20           
 
 gastos_essencial = 0.0
 gastos_estilo = 0.0
-gastos_aporte = 0.0
-DIVIDA_TOTAL_INICIAL = DIVIDA_TOTAL_INICIAL_MANUAL
-total_pago_divida = 0.0
+gastos_aporte_mes = 0.0
 
-# Dicionário dinâmico para somar o progresso dos porquinhos
-acumulado_meta_1 = 0.0
-acumulado_meta_2 = 0.0
+# Somadores do histórico acumulado dos porquinhos (leem além do filtro do mês)
+acumulado_porquinho_1 = 0.0
+acumulado_porquinho_2 = 0.0
 
 df_todos_dados = pd.DataFrame()
 df_filtrado = pd.DataFrame()
@@ -88,29 +85,19 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. Varre o banco inteiro para calcular Dívidas e os Porquinhos de Investimento (Histórico Acumulado)
+            # 1. RASTREADOR HISTÓRICO DOS PORQUINHOS: Ignora o mês e soma todo o passado guardado
             for item in res_data:
                 grupo = item["grupo_orcamentario"]
                 subcat = item["subcategoria"]
-                tipo_mov = item.get("tipo", "Gasto ou Investimento (Saída)")
                 val_mov = float(item["valor"])
                 
-                # Inteligência de Dívidas
-                if "📋 Quitação de Dívidas" in grupo:
-                    if "Entrada" in tipo_mov:
-                        if DIVIDA_TOTAL_INICIAL_MANUAL == 0:
-                            DIVIDA_TOTAL_INICIAL += val_mov
-                    else:
-                        total_pago_divida += val_mov
-                
-                # Inteligência de Porquinhos (Soma o que foi poupado para cada objetivo criado)
                 if "20% Aporte" in grupo:
-                    if subcat == nome_meta_1:
-                        acumulado_meta_1 += val_mov
-                    elif subcat == nome_meta_2:
-                        acumulado_meta_2 += val_mov
+                    if subcat == nome_fundo_1:
+                        acumulado_porquinho_1 += val_mov
+                    elif subcat == nome_fundo_2:
+                        acumulado_porquinho_2 += val_mov
             
-            # 2. Aplicação dos filtros de tempo para o painel mensal líquido
+            # 2. Filtros temporais normais para o painel de gastos correntes
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
@@ -134,14 +121,12 @@ if supabase:
                     elif "30% Estilo de Vida" in grupo:
                         gastos_estilo += val
                     elif "20% Aporte" in grupo:
-                        gastos_aporte += val
+                        gastos_aporte_mes += val
                     
     except Exception as e:
-        st.error(f"Erro no processamento técnico de dados: {e}")
+        st.error(f"Erro no processamento de dados do banco: {e}")
 
-divida_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
-
-# --- MAPA DINÂMICO DE CATEGORIAS (Integra os porquinhos criados no formulário) ---
+# Mapeamento de categorias blindado contra travamentos
 MAPA_CATEGORIAS = {
     "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)": [
         "Alimentação Básica & Mercado", "Contas Fixas (Luz, Água, Internet)", 
@@ -154,47 +139,23 @@ MAPA_CATEGORIAS = {
         "Viagens & Hobbies", "Assinaturas (Netflix, Spotify)"
     ],
     "🚀 20% Aporte para a Liberdade (Investimentos e Futuro)": [
-        nome_meta_1, nome_meta_2, "Outros Investimentos Liberações"
-    ],
-    "📋 Quitação de Dívidas (Amortizações e Acordos)": [
-        "Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens", "Dívidas Pessoais / Terceiros"
+        nome_fundo_1, nome_fundo_2, "Investimentos Gerais / Outros"
     ],
     "💼 Custos de Negócio (Projetos e Clínica)": [
         "Ferramentas SaaS & Softwares", "Marketing & Anúncios", "Infraestrutura & Custos Operacionais"
     ]
 }
 
-# --- NAVEGAÇÃO ---
-aba_painel, aba_investimentos = st.tabs(["📊 Painel & Lançamentos", "🐷 Investimentos & Objetivos"])
+# --- CRIAÇÃO DAS ABAS ---
+aba_painel, aba_porquinhos = st.tabs(["📊 Painel & Lançamentos", "🐷 Os Meus Porquinhos"])
 
-# ==================== ABA 1: PAINEL E LANÇAMENTOS ====================
+# ==================== ABA 1: PAINEL TRADICIONAL ====================
 with aba_painel:
     st.title("📲 Meu Planner Financeiro")
-    st.markdown(f"**Competência:** {lista_meses[mes_selecionado_num]} / {ano_selecionado} ({janela_tempo})")
+    st.markdown(f"**Análise Mensal:** {lista_meses[mes_selecionado_num]} / {ano_selecionado}")
     st.markdown("---")
     
-    st.subheader("📊 Painel de Limites Orçamentários")
-    st.markdown("### 🧮 Situação de Dívidas Estruturadas")
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric(label="Volume Devedor Inicial", value=f"R$ {DIVIDA_TOTAL_INICIAL:,.2f}")
-    col2.metric(label="Total Amortizado (Pago)", value=f"R$ {total_pago_divida:,.2f}")
-    
-    # CRUCIAL: Exibe claramente o valor real em dinheiro que falta para quitar
-    if divida_restante > 0:
-        col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {divida_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
-    else:
-        col3.metric(label="Saldo Devedor", value="R$ 0,00 🎉", delta="Quitado!")
-    
-    if DIVIDA_TOTAL_INICIAL > 0:
-        perc_divida_paga = min(total_pago_divida / DIVIDA_TOTAL_INICIAL, 1.0)
-        st.progress(perc_divida_paga)
-        st.caption(f"Progresso de Liquidação: **{perc_divida_paga * 100:.1f}%** do montante quitado.")
-    else:
-        st.info("💡 Nenhuma dívida ativa mapeada no histórico.")
-    
-    st.markdown("---")
-    st.markdown("### 🧭 Distribuição Líquida do Período")
+    st.subheader("📊 Limites Orçamentários do Mês")
     
     st.write(f"🔴 **Gasto Essencial:** R$ {gastos_essencial:,.2f} de R$ {LIMITE_ESSENCIAL:,.2f}")
     st.progress(min(gastos_essencial / LIMITE_ESSENCIAL, 1.0) if LIMITE_ESSENCIAL > 0 else 0.0)
@@ -202,18 +163,19 @@ with aba_painel:
     st.write(f"🟡 **Estilo de Vida:** R$ {gastos_estilo:,.2f} de R$ {LIMITE_ESTILO_DE_VIDA:,.2f}")
     st.progress(min(gastos_estilo / LIMITE_ESTILO_DE_VIDA, 1.0) if LIMITE_ESTILO_DE_VIDA > 0 else 0.0)
     
-    st.write(f"🚀 **Aportes Efetuados:** R$ {gastos_aporte:,.2f} de R$ {META_APORTE:,.2f}")
-    st.progress(min(gastos_aporte / META_APORTE, 1.0) if META_APORTE > 0 else 0.0)
+    st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
+    st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
     if not df_filtrado.empty:
         st.markdown("---")
         df_agrupado = df_filtrado.groupby("grupo_orcamentario")["valor"].sum().reset_index()
-        fig_rosca = px.pie(df_agrupado, values="valor", names="grupo_orcamentario", hole=0.4, title="Distribuição Financeira Real (R$)")
+        fig_rosca = px.pie(df_agrupado, values="valor", names="grupo_orcamentario", hole=0.4, title="Divisão de Custos do Mês")
         st.plotly_chart(fig_rosca, use_container_width=True)
 
-    # FORMULÁRIO
+    # FORMULÁRIO DE ENTRADA
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação")
+    
     grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
     opcoes_subcategoria = MAPA_CATEGORIAS[grupo_orcamentario]
     categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria, key="sub_filho_main")
@@ -222,7 +184,7 @@ with aba_painel:
         valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
         tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
         data_movimento = st.date_input("Data do evento:", datetime.date.today())
-        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Parcela do Objetivo, Mercado, Luz...")
+        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Aporte Reserva, Parcela do Carro...")
         satisfacao = st.select_slider("🧠 Nível de necessidade real?", options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"], value="2 - Útil / Desejável")
         botao_enviar = st.form_submit_button("Confirmar Lançamento")
         
@@ -235,17 +197,17 @@ with aba_painel:
                     "subcategoria": categoria, "satisfacao": satisfacao
                 }
                 supabase.table("movimentacoes").insert(dados_gasto).execute()
-                st.success("✅ Operação registrada!")
+                st.success("✅ Operação registrada com sucesso!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # GERENCIADOR
+    # GERENCIADOR MENSAL
     st.markdown("---")
-    st.subheader("📋 Gerenciar Lançamentos do Período")
+    st.subheader("📋 Lançamentos do Período")
     if supabase and not df_filtrado.empty:
-        df_editor = df_filtrado[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
-        df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Tipo"]
+        df_editor = df_filtrado[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor"]].copy()
+        df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)"]
         
         dados_editados = st.data_editor(df_editor, use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic")
         
@@ -260,44 +222,44 @@ with aba_painel:
                 for _, row in dados_editados.iterrows():
                     row_id = int(row["ID"])
                     orig_row = df_editor[df_editor["ID"] == row_id].iloc[0]
-                    if (row["Descrição"] != orig_row["Descrição"]) or (float(row["Valor (R$)"]) != float(orig_row["Valor (R$)"])) or (row["Tipo"] != orig_row["Tipo"]):
-                        supabase.table("movimentacoes").update({"descricao": row["Descrição"], "valor": float(row["Valor (R$)"]), "tipo": row["Tipo"]}).eq("id", row_id).execute()
-                st.success("🔄 Todo o ecossistema sincronizado e atualizado!")
+                    if (row["Descrição"] != orig_row["Descrição"]) or (float(row["Valor (R$)"]) != float(orig_row["Valor (R$)"])):
+                        supabase.table("movimentacoes").update({"descricao": row["Descrição"], "valor": float(row["Valor (R$)"])}).eq("id", row_id).execute()
+                st.success("🔄 Dados sincronizados!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar alterações: {e}")
 
-# ==================== ABA 2: OS PORQUINHOS DE INVESTIMENTO ====================
-with aba_investimentos:
-    st.header("🐷 Seus Porquinhos & Metas de Patrimônio")
-    st.caption("Acompanhe o preenchimento dos seus fundos objetivos com base nos aportes reais realizados.")
+# ==================== ABA 2: OS PORQUINHOS (MÓDULO SOLICITADO) ====================
+with aba_porquinhos:
+    st.title("🐷 Os Meus Porquinhos Dinâmicos")
+    st.caption("Acompanhe o preenchimento das suas grandes metas financeiras com base nos seus aportes históricos.")
     st.markdown("---")
     
-    # PORQUINHO 1
-    if valor_meta_1 > 0 and nome_meta_1:
-        st.subheader(f"🎯 Fundo: {nome_meta_1}")
-        falta_meta_1 = max(valor_meta_1 - acumulado_meta_1, 0.0)
+    # RENDERIZAÇÃO DO PORQUINHO 1
+    if alvo_fundo_1 > 0 and nome_fundo_1:
+        st.subheader(f"🧱 Alvo: {nome_fundo_1}")
+        falta_fundo_1 = max(alvo_fundo_1 - acumulado_porquinho_1, 0.0)
         
         c1, c2, c3 = st.columns(3)
-        c1.metric(label="Valor Alvo Final", value=f"R$ {valor_meta_1:,.2f}")
-        c2.metric(label="Total Já Acumulado", value=f"R$ {acumulado_meta_1:,.2f}", delta="+Guardado")
-        c3.metric(label="Falta Pagar / Alocar", value=f"R$ {falta_meta_1:,.2f}")
+        c1.metric(label="Valor Alvo Final", value=f"R$ {alvo_fundo_1:,.2f}")
+        c2.metric(label="Total Já Acumulado", value=f"R$ {acumulado_porquinho_1:,.2f}", delta="Guardado")
+        c3.metric(label="Quanto Falta Poupar", value=f"R$ {falta_fundo_1:,.2f}")
         
-        perc_1 = min(acumulado_meta_1 / valor_meta_1, 1.0)
+        perc_1 = min(acumulado_porquinho_1 / alvo_fundo_1, 1.0)
         st.progress(perc_1)
-        st.markdown(f"**Progresso do Porquinho:** {perc_1 * 100:.1f}% concluído.")
+        st.markdown(f"**Porquinho preenchido:** {perc_1 * 100:.1f}%")
         st.markdown("---")
         
-    # PORQUINHO 2
-    if valor_meta_2 > 0 and nome_meta_2:
-        st.subheader(f"🎯 Fundo: {nome_meta_2}")
-        falta_meta_2 = max(valor_meta_2 - acumulado_meta_2, 0.0)
+    # RENDERIZAÇÃO DO PORQUINHO 2
+    if alvo_fundo_2 > 0 and nome_fundo_2:
+        st.subheader(f"🚗 Alvo: {nome_fundo_2}")
+        falta_fundo_2 = max(alvo_fundo_2 - acumulado_porquinho_2, 0.0)
         
         m1, m2, m3 = st.columns(3)
-        m1.metric(label="Valor Alvo Final", value=f"R$ {valor_meta_2:,.2f}")
-        m2.metric(label="Total Já Acumulado", value=f"R$ {acumulado_meta_2:,.2f}", delta="+Guardado")
-        m3.metric(label="Falta Pagar / Alocar", value=f"R$ {falta_meta_2:,.2f}")
+        m1.metric(label="Valor Alvo Final", value=f"R$ {alvo_fundo_2:,.2f}")
+        m2.metric(label="Total Já Acumulado", value=f"R$ {acumulado_porquinho_2:,.2f}", delta="Guardado")
+        m3.metric(label="Quanto Falta Poupar", value=f"R$ {falta_fundo_2:,.2f}")
         
-        perc_2 = min(acumulado_meta_2 / valor_meta_2, 1.0)
+        perc_2 = min(acumulado_porquinho_2 / alvo_fundo_2, 1.0)
         st.progress(perc_2)
-        st.markdown(f"**Progresso do Porquinho:** {perc_2 * 100:.1f}% concluído.")
+        st.markdown(f"**Porquinho preenchido:** {perc_2 * 100:.1f}%")
