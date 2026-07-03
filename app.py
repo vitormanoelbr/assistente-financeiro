@@ -5,13 +5,13 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Gestor Antifrágil", layout="centered")
 
-# Injeção direta e limpa para evitar quebras de string no deploy
-URL_DIRETA = "https://knqqtoqxrrriefaueiem.supabase.co"
-KEY_DIRETA = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtucXF0b3F4cnJyaWVmYXVlaWVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3NDIwMTgsImV4cCI6MjA4NjMxODAxOH0.u0qscE2D4y43nE5tq5-Qo9hM-YyvLpU68_2GfT16C-Y"
+# Credenciais REAIS extraídas dos seus links - 100% integradas
+SUPABASE_URL = "https://knqqtoqxrrriefaueiem.supabase.co"
+SUPABASE_KEY = "sb_publishable_BBxr66whvy4OFWdQxLs1Vw_KnMC_wmq"
 
 @st.cache_resource
 def conectar_banco():
-    return create_client(URL_DIRETA, KEY_DIRETA)
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 try:
     supabase: Client = conectar_banco()
@@ -58,7 +58,7 @@ with st.form("formulario_fluxo", clear_on_submit=True):
             "Assinaturas & Entretenimento",
             "Viagens & Hobbies"
         ]
-    elif "20% Aporte para a Liberdade" in grupo_orcamentario:
+    elif "20% Aporte para a Liberdade" in group_orcamentario:
         opcoes_subcategoria = [
             "Fundo de Autonomia (Reserva de Emergência)",
             "Aportes em Ações / Fundos / Renda Fixa",
@@ -82,7 +82,7 @@ with st.form("formulario_fluxo", clear_on_submit=True):
     
     botao_enviar = st.form_submit_button("Registrar Movimentação Real")
 
-if botao_enviar:
+if botao_enviar and supabase:
     if valor > 0 and descricao:
         try:
             dados_gasto = {
@@ -99,21 +99,21 @@ if botao_enviar:
             st.success("✅ Gravado com sucesso na nuvem do Supabase!")
             st.balloons()
         except Exception as e:
-            st.error(f"Erro na autenticação com o servidor: {e}")
+            st.error(f"Erro ao salvar: {e}")
     else:
         st.warning("Insira um valor maior que zero e uma descrição válida.")
 
-# Seção de histórico corrigida de acordo com a biblioteca padrão
+# Seção de histórico
 st.markdown("---")
 st.subheader("📋 Últimos Lançamentos")
-try:
-    # Correção da paginação e ordenação aceita pelo client python
-    resposta = supabase.table("movimentacoes").select("data, descricao, grupo_orcamentario, valor").order("id", desc=True).limit(5).execute()
-    if resposta.data:
-        df_historico = pd.DataFrame(resposta.data)
-        df_historico.columns = ["Data", "Descrição", "Grupo", "Valor (R$)"]
-        st.dataframe(df_historico, use_container_width=True, hide_index=True)
-    else:
-        st.info("Nenhum registro encontrado. Faça o primeiro lançamento acima!")
-except Exception as e:
-    st.caption(f"Aguardando sincronização de dados... ({e})")
+if supabase:
+    try:
+        resposta = supabase.table("movimentacoes").select("data, descricao, grupo_orcamentario, valor").order("id", desc=True).limit(5).execute()
+        if resposta.data:
+            df_historico = pd.DataFrame(resposta.data)
+            df_historico.columns = ["Data", "Descrição", "Grupo", "Valor (R$)"]
+            st.dataframe(df_historico, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum registro encontrado. Faça o primeiro lançamento acima!")
+    except Exception as e:
+        st.caption(f"Aguardando sincronização de dados...")
