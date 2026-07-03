@@ -9,7 +9,6 @@ st.title("📊 Assistente Financeiro Vitor Manoel")
 st.subheader("Inteligência Orçamentária | Banco Inter")
 st.markdown("---")
 
-# 1. REGRAS DE CATEGORIZAÇÃO (Mantenha e expanda conforme necessário)
 REGRAS_ORCAMENTO = {
     'ATACADAO': ('Mercado', '50% Essencial'),
     'BIG MASTE': ('Mercado', '50% Essencial'),
@@ -43,51 +42,39 @@ def classificar_transacao(descricao):
             return categoria, grupo
     return 'Outros', 'A Classificar por IA'
 
-# 2. INTERFACE DE UPLOAD (Focada no Mobile)
 st.sidebar.header("📥 Alimentar o Assistente")
 arquivo_carregado = st.sidebar.file_uploader("Suba o CSV do Banco Inter aqui:", type=["csv"])
 
 if arquivo_carregado is not None:
     try:
-        # Lendo o CSV do Inter tratando o formato de moeda brasileiro (, para centavos e . para milhar)
         df_bruto = pd.read_csv(arquivo_carregado, sep=';', encoding='utf-8', decimal=',', thousands='.')
-        
-        # Ajuste de colunas padrão do Inter (Geralmente: Data Lançamento, Descrição, Valor)
-        # Forçamos uma limpeza básica nos nomes das colunas para evitar erros de espaços vazios
         df_bruto.columns = [col.strip() for col in df_bruto.columns]
         
-        # Mapeamento dinâmico para encontrar as colunas certas do Inter
         col_data = [c for c in df_bruto.columns if 'data' in c.lower()][0]
         col_desc = [c for c in df_bruto.columns if 'desc' in c.lower() or 'historico' in c.lower()][0]
         col_valor = [c for c in df_bruto.columns if 'valor' in c.lower()][0]
         
-        # Criando o dataframe padrão focado no que precisamos
         df = pd.DataFrame({
             'Data': df_bruto[col_data],
             'Descricao': df_bruto[col_desc],
             'Valor': df_bruto[col_valor]
         })
         
-        # Filtrando apenas despesas (valores menores que zero) e removendo o que for movimentação interna
         df['Categoria'], df['Grupo_Orcamentario'] = zip(*df['Descricao'].apply(classificar_transacao))
         df_despesas = df[(df['Valor'] < 0) & (~df['Grupo_Orcamentario'].isin(['Movimentação Interna', 'Descontinuado']))].copy()
         df_despesas['Valor_Absoluto'] = df_despesas['Valor'].abs()
         
-        # Cálculos de Métricas
         total_essencial = df_despesas[df_despesas['Grupo_Orcamentario'] == '50% Essencial']['Valor_Absoluto'].sum()
         total_estilo = df_despesas[df_despesas['Grupo_Orcamentario'] == '30% Estilo de Vida']['Valor_Absoluto'].sum()
         total_negocio = df_despesas[df_despesas['Grupo_Orcamentario'] == 'Custos de Negócio']['Valor_Absoluto'].sum()
         total_geral = df_despesas['Valor_Absoluto'].sum()
         
-        # Exibição de KPIs (Responsivo para Celular em blocos menores)
         st.metric(label="🔴 50% Essencial Total", value=f"R$ {total_essencial:,.2f}")
         st.metric(label="🟡 30% Estilo de Vida Total", value=f"R$ {total_estilo:,.2f}")
         st.metric(label="💼 Custos de Negócio", value=f"R$ {total_negocio:,.2f}")
         st.metric(label="💸 Total Desembolsado", value=f"R$ {total_geral:,.2f}")
         
         st.markdown("---")
-        
-        # Gráfico Otimizado para proporções Mobile (Donut chart mais limpo)
         st.subheader("Distribuição do Orçamento")
         df_pizza = df_despesas.groupby('Grupo_Orcamentario')['Valor_Absoluto'].sum().reset_index()
         fig = px.pie(df_pizza, values='Valor_Absoluto', names='Grupo_Orcamentario', hole=0.5,
@@ -96,15 +83,12 @@ if arquivo_carregado is not None:
         st.plotly_chart(fig, use_container_width=True)
         
         st.markdown("---")
-        
-        # Tabela vertical simplificada e estreita para rolagem no celular
         st.subheader("📋 Extrato Simplificado")
         df_exibicao = df_despesas[['Data', 'Descricao', 'Categoria', 'Valor_Absoluto']].copy()
         df_exibicao.columns = ['Data', 'Lançamento', 'Cat', 'Valor']
         df_exibicao['Valor'] = df_exibicao['Valor'].map("R$ {:,.2f}".format)
         st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
         
-        # Espaço do Chat
         st.markdown("---")
         st.subheader("💬 Chat com os dados do Extrato")
         
