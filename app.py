@@ -40,7 +40,7 @@ REGRAS_ORCAMENTO = {
 def classificar_transacao(descricao):
     for termo, (categoria, grupo) in REGRAS_ORCAMENTO.items():
         if re.search(termo, descricao, re.IGNORECASE):
-            return category, grupo
+            return categoria, grupo
     return 'Outros', 'A Classificar por IA'
 
 # 2. INTERFACE DE UPLOAD
