@@ -1,6 +1,7 @@
 import streamlit as st
 import datetime
 import pandas as pd
+import plotly.express as px
 from supabase import create_client, Client
 
 st.set_page_config(page_title="Meu Planner Financeiro", layout="centered")
@@ -18,26 +19,27 @@ try:
 except Exception as e:
     st.error(f"Falha na conexão estrutural: {e}")
 
-# --- CONFIGURAÇÃO FIXA REQUISITADA ---
+# --- CONFIGURAÇÃO FIXA ---
 RENDA_FIXA = 2500.00
-LIMITE_ESSENCIAL = RENDA_FIXA * 0.50       # R$ 1250
-LIMITE_ESTILO_DE_VIDA = RENDA_FIXA * 0.30  # R$ 750
-META_APORTE = RENDA_FIXA * 0.20           # R$ 500
-
-# Meta de simulação de Dívida Total (para análise visual de quitação)
+LIMITE_ESSENCIAL = RENDA_FIXA * 0.50       
+LIMITE_ESTILO_DE_VIDA = RENDA_FIXA * 0.30  
+META_APORTE = RENDA_FIXA * 0.20           
 DIVIDA_TOTAL_INICIAL = 5000.00 
 
-# Inicialização de somadores
 gastos_essencial = 0.0
 gastos_estilo = 0.0
 gastos_aporte = 0.0
 total_pago_divida = 0.0
+df_todos_dados = pd.DataFrame()
 
 if supabase:
     try:
-        dados_banco = supabase.table("movimentacoes").select("valor, grupo_orcamentario").execute()
-        if dados_banco.data:
-            for item in dados_banco.data:
+        resposta_completa = supabase.table("movimentacoes").select("valor, grupo_orcamentario, subcategoria, satisfacao").execute()
+        if resposta_completa.data:
+            df_todos_dados = pd.DataFrame(resposta_completa.data)
+            df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
+            
+            for item in resposta_completa.data:
                 val = float(item["valor"])
                 grupo = item["grupo_orcamentario"]
                 
@@ -52,18 +54,15 @@ if supabase:
     except Exception as e:
         pass
 
-# Restante da dívida a ser paga
 divida_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
-# --- INTERFACE CORRIGIDA ---
+# --- INTERFACE ---
 st.title("📲 Meu Planner Financeiro")
 st.markdown(f"**Orçamento Mensal Base:** R$ {RENDA_FIXA:,.2f}")
 st.markdown("---")
 
-# PAINEL DE LIMITES E REALIDADE FINANCEIRA
 st.subheader("📊 Painel de Limites Orçamentários")
 
-# 1. Termômetro de Dívidas (Nova Seção Estratégica)
 st.markdown("### 🧮 Situação de Dívidas Atuais")
 col1, col2 = st.columns(2)
 col1.metric(label="Dívida Restante", value=f"R$ {divida_restante:,.2f}")
@@ -76,34 +75,62 @@ st.caption(f"Você já liquidou **{perc_divida_paga * 100:.1f}%** do volume tota
 st.markdown("---")
 st.markdown("### 🧭 Distribuição do Mês")
 
-# 2. Limite Essencial
 perc_essencial = min(gastos_essencial / LIMITE_ESSENCIAL, 1.0) if LIMITE_ESSENCIAL > 0 else 0.0
 st.write(f"🔴 **Gasto Essencial Atual:** R$ {gastos_essencial:,.2f} de R$ {LIMITE_ESSENCIAL:,.2f}")
 st.progress(perc_essencial)
 if gastos_essencial > LIMITE_ESSENCIAL:
-    st.warning("⚠️ **Análise de Realidade:** O custo essencial estourou os 50%. Isso sinaliza que sua estrutura fixa está pesada para a renda atual.")
+    st.warning("⚠️ **Análise de Realidade:** O custo essencial estourou os 50%. A estrutura fixa está pesada para a renda atual.")
 
-# 3. Limite Estilo de Vida
 perc_estilo = min(gastos_estilo / LIMITE_ESTILO_DE_VIDA, 1.0) if LIMITE_ESTILO_DE_VIDA > 0 else 0.0
 st.write(f"🟡 **Estilo de Vida & Lazer:** Gastou R$ {gastos_estilo:,.2f} de R$ {LIMITE_ESTILO_DE_VIDA:,.2f}")
 st.progress(perc_estilo)
 if gastos_estilo == 0:
     st.info("✅ Margem de Estilo de Vida preservada (R$ 0,00 utilizados).")
 
-# 4. Meta de Aportes
 perc_aporte = min(gastos_aporte / META_APORTE, 1.0) if META_APORTE > 0 else 0.0
 st.write(f"🚀 **Futuro & Liberdade (Aportes):** R$ {gastos_aporte:,.2f} de R$ {META_APORTE:,.2f}")
 st.progress(perc_aporte)
 
+# --- NOVA SEÇÃO DE GRÁFICOS INTELIGENTES ---
+if not df_todos_dados.empty:
+    st.markdown("---")
+    st.markdown("### 📈 Análise Visual do Dinheiro")
+    
+    # Gráfico 1: Onde o dinheiro está indo de verdade
+    df_agrupado = df_todos_dados.groupby("grupo_orcamentario")["valor"].sum().reset_index()
+    fig_rosca = px.pie(
+        df_agrupado, 
+        values="valor", 
+        names="grupo_orcamentario", 
+        hole=0.4,
+        title="Divisão Real dos Gastos Acumulados",
+        color_discrete_sequence=["#FF4B4B", "#00F0FF", "#FFD700", "#00FF66", "#9932CC"]
+    )
+    fig_rosca.update_layout(showlegend=False)
+    st.plotly_chart(fig_rosca, use_container_width=True)
+    
+    # Gráfico 2: Psicologia de Consumo (O quanto os gastos são mesmo úteis)
+    df_satisfacao = df_todos_dados.groupby("satisfacao")["valor"].count().reset_index()
+    df_satisfacao.columns = ["Nível de Necessidade", "Quantidade de Gastos"]
+    fig_barra = px.bar(
+        df_satisfacao,
+        x="Nível de Necessidade",
+        y="Quantidade de Gastos",
+        title="🧠 Raio-X de Intencionalidade (Frequência de Compras)",
+        color="Nível de Necessidade",
+        color_discrete_sequence=["#FFA500", "#32CD32", "#FF4500"]
+    )
+    st.plotly_chart(fig_barra, use_container_width=True)
+
 st.markdown("---")
 
-# FORMULÁRIO ADAPTADO
+# FORMULÁRIO
 st.subheader("📥 Registrar Movimentação")
 with st.form("formulario_fluxo", clear_on_submit=True):
     valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
     tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
     data_movimento = st.date_input("Data do evento:", datetime.date.today())
-    descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Parcela do Empréstimo, Mercado, Luz...")
+    descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Mercado, Luz, Parcela do Empréstimo...")
     
     grupo_orcamentario = st.selectbox(
         "Destinação Estratégica do Valor:",
@@ -123,7 +150,7 @@ with st.form("formulario_fluxo", clear_on_submit=True):
     elif "20% Aporte" in grupo_orcamentario:
         opcoes_subcategoria = ["Reserva de Autonomia", "Aportes Renda Fixa/Variável"]
     elif "Quitação de Dívidas" in grupo_orcamentario:
-        opcoes_subcategoria = ["Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos", "Outros Acordos"]
+        opcoes_subcategoria = ["Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos"]
     else:
         opcoes_subcategoria = ["Ferramentas & Softwares", "Marketing", "Custos Operacionais"]
         
@@ -161,7 +188,7 @@ st.subheader("📋 Últimos Lançamentos Registrados")
 if supabase:
     try:
         resposta = supabase.table("movimentacoes").select("data, descricao, grupo_orcamentario, valor").order("id", desc=True).limit(5).execute()
-        if respuesta.data:
+        if resposta.data:
             df_historico = pd.DataFrame(resposta.data)
             df_historico.columns = ["Data", "Descrição", "Grupo", "Valor (R$)"]
             st.dataframe(df_historico, use_container_width=True, hide_index=True)
