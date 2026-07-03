@@ -23,39 +23,9 @@ try:
 except Exception as e:
     st.error(f"Falha na conexão estrutural: {e}")
 
-# --- 🧠 PERSISTÊNCIA DE ESTADO DE SESSÃO (EVITA RESET POR F5) ---
-if "meta_1_nome" not in st.session_state:
-    st.session_state["meta_1_nome"] = "🧱 Reserva de Emergência"
-if "meta_1_valor" not in st.session_state:
-    st.session_state["meta_1_valor"] = 5000.00
-if "meta_2_nome" not in st.session_state:
-    st.session_state["meta_2_nome"] = "🚗 Comprar Carro"
-if "meta_2_valor" not in st.session_state:
-    st.session_state["meta_2_valor"] = 80000.00
-
-# --- ⚙️ MENU LATERAL DE CONFIGURAÇÕES (SIDEBAR) ---
+# --- ⚙️ PERFIL & FILTROS (SIDEBAR) ---
 st.sidebar.header("⚙️ Configurações do Perfil")
 RENDA_BASE = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=2500.00, step=100.0)
-
-st.sidebar.markdown("---")
-st.sidebar.header("🎯 Configurar Objetivos (Porquinhos)")
-st.sidebar.caption("Altere os nomes e valores abaixo e clique em 'Salvar Objetivos' para fixá-los na interface.")
-
-# Inputs interativos que alimentam a sessão estável
-novo_nome_1 = st.sidebar.text_input("Objetivo 1:", value=st.session_state["meta_1_nome"])
-novo_valor_1 = st.sidebar.number_input("Alvo 1 (R$):", min_value=0.0, value=st.session_state["meta_1_valor"], step=500.0)
-
-novo_nome_2 = st.sidebar.text_input("Objetivo 2:", value=st.session_state["meta_2_nome"])
-novo_valor_2 = st.sidebar.number_input("Alvo 2 (R$):", min_value=0.0, value=st.session_state["meta_2_valor"], step=1000.0)
-
-# Botão gerenciador que impede o app de "esquecer" os novos nomes digitados
-if st.sidebar.button("💾 Salvar Objetivos no Painel"):
-    st.session_state["meta_1_nome"] = novo_nome_1
-    st.session_state["meta_1_valor"] = novo_valor_1
-    st.session_state["meta_2_nome"] = novo_nome_2
-    st.session_state["meta_2_valor"] = novo_valor_2
-    st.sidebar.success("🎯 Objetivos atualizados com sucesso!")
-    st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Filtros de Tempo")
@@ -81,6 +51,7 @@ mes_selected_num = st.sidebar.selectbox(
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
 # --- PROCESSAMENTO LÓGICO DE DADOS ---
+# Metas do método base
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE_MENSAL = RENDA_BASE * 0.20           
@@ -89,11 +60,13 @@ gastos_essencial = 0.0
 gastos_estilo = 0.0
 gastos_aporte_mes = 0.0
 
+# Motores dinâmicos de Dívidas e Porquinhos de Investimento
 DIVIDA_TOTAL_INICIAL = 0.0
 total_pago_divida = 0.0
 
-acumulado_porquinho_1 = 0.0
-acumulado_porquinho_2 = 0.0
+# Dicionários para carregar metas e aportes dinâmicos direto da nuvem
+dicionario_metas_alvo = {}
+dicionario_aportes_acumulados = {}
 
 df_todos_dados = pd.DataFrame()
 df_filtrado = pd.DataFrame()
@@ -106,36 +79,38 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
+            # VARREDURA HISTÓRICA COMPLETA NA NUVEM
             for item in res_data:
                 grupo = item["grupo_orcamentario"]
                 subcat = item["subcategoria"]
                 tipo_mov = item.get("tipo", "Gasto ou Investimento (Saída)")
                 val_mov = float(item["valor"])
+                desc = item["descricao"]
                 
-                # Motor de Dívidas
+                # 1. Motor de Dívidas Original
                 if "📋 Quitação de Dívidas" in grupo:
                     if "Entrada" in tipo_mov:
                         DIVIDA_TOTAL_INICIAL += val_mov
                     else:
                         total_pago_divida += val_mov
                 
-                # Motor de Porquinhos baseado nas variáveis salvas na sessão
-                if "20% Aporte" in grupo:
-                    if subcat == st.session_state["meta_1_nome"]:
-                        acumulado_porquinho_1 += val_mov
-                    elif subcat == st.session_state["meta_2_nome"]:
-                        acumulado_porquinho_2 += val_mov
+                # 2. INTELIGÊNCIA DE CRIAÇÃO DE METAS AUTOMÁTICA
+                # Se você registrar uma ENTRADA em Aportes, o sistema entende que é a Criação de um Porquinho Novo
+                if "🚀 20% Aporte" in grupo:
+                    if "Entrada" in tipo_mov:
+                        dicionario_metas_alvo[subcat] = val_mov
+                    else:
+                        # Se for SAÍDA, é dinheiro entrando no porquinho
+                        dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
             
-            # Filtro Temporal do Período
+            # Filtro Temporal do Período para Barras e Gráficos
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
-            
             df_filtrado = df_filtrado[(df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num)]
             
             if janela_tempo == "Últimos 7 Dias":
-                setem_dias_atras = hoje - datetime.timedelta(days=7)
-                df_filtrado = df_filtrado[df_filtrado["data_dt"] >= setem_dias_atras]
+                df_filtrado = df_filtrado[df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))]
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
                 
@@ -157,6 +132,11 @@ if supabase:
 
 divida_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
+# Lista de porquinhos detectados na nuvem para popular o formulário automaticamente
+lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
+if not lista_porquinhos_existentes:
+    lista_porquinhos_existentes = ["🧱 Reserva de Emergência", "🏡 Comprar Casa"]
+
 MAPA_CATEGORIAS = {
     "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)": [
         "Alimentação Básica & Mercado", "Contas Fixas (Luz, Água, Internet)", 
@@ -168,9 +148,7 @@ MAPA_CATEGORIAS = {
         "Vestuário, Compras & Presentes", "Estética, Cuidados & Academia", 
         "Viagens & Hobbies", "Assinaturas (Netflix, Spotify)"
     ],
-    "🚀 20% Aporte para a Liberdade (Investimentos e Futuro)": [
-        st.session_state["meta_1_nome"], st.session_state["meta_2_nome"], "Investimentos Gerais / Outros"
-    ],
+    "🚀 20% Aporte para a Liberdade (Investimentos e Futuro)": lista_porquinhos_existentes + ["➕ [Criar Nova Meta / Porquinho]"],
     "📋 Quitação de Dívidas (Amortizações e Acordos)": [
         "Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens", "Dívidas Pessoais / Terceiros"
     ],
@@ -188,43 +166,31 @@ with aba_painel:
     st.markdown(f"**Competência do Painel:** {lista_meses[mes_selected_num]} / {ano_selected} ({janela_tempo})")
     st.markdown("---")
     
+    # PAINEL DE DÍVIDAS RESTAURADO
     st.subheader("📊 Painel de Limites Orçamentários")
     st.markdown("### 🧮 Situação de Dívidas Estruturadas")
-    
     col1, col2, col3 = st.columns(3)
     col1.metric(label="Volume Devedor Inicial", value=f"R$ {DIVIDA_TOTAL_INICIAL:,.2f}")
     col2.metric(label="Total Amortizado (Pago)", value=f"R$ {total_pago_divida:,.2f}")
-    
-    if dividas_restante := divida_restante:
-        if dividas_restante > 0:
-            col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {dividas_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
-        else:
-            col3.metric(label="Saldo Devedor", value="R$ 0,00 🎉", delta="Quitado!")
+    if divida_restante > 0:
+        col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {divida_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
+    else:
+        col3.metric(label="Saldo Devedor", value="R$ 0,00 🎉", delta="Quitado!")
         
     if DIVIDA_TOTAL_INICIAL > 0:
-        perc_divida_paga = min(total_pago_divida / DIVIDA_TOTAL_INICIAL, 1.0)
-        st.progress(perc_divida_paga)
-        st.caption(f"Progresso de Liquidação: **{perc_divida_paga * 100:.1f}%** do montante quitado.")
+        st.progress(min(total_pago_divida / DIVIDA_TOTAL_INICIAL, 1.0))
     
     st.markdown("---")
-    st.markdown("### 🧭 Distribuição Líquida do Período")
     
+    # DISTRIBUIÇÃO MENSAL LÍQUIDA
     st.write(f"🔴 **Gasto Essencial:** R$ {gastos_essencial:,.2f} de R$ {LIMITE_ESSENCIAL:,.2f}")
     st.progress(min(gastos_essencial / LIMITE_ESSENCIAL, 1.0) if LIMITE_ESSENCIAL > 0 else 0.0)
-    
     st.write(f"🟡 **Estilo de Vida:** R$ {gastos_estilo:,.2f} de R$ {LIMITE_ESTILO_DE_VIDA:,.2f}")
     st.progress(min(gastos_estilo / LIMITE_ESTILO_DE_VIDA, 1.0) if LIMITE_ESTILO_DE_VIDA > 0 else 0.0)
-    
     st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
-    if not df_filtrado.empty:
-        st.markdown("---")
-        df_agrupado = df_filtrado.groupby("grupo_orcamentario")["valor"].sum().reset_index()
-        fig_rosca = px.pie(df_agrupado, values="valor", names="grupo_orcamentario", hole=0.4, title="Divisão de Custos do Período")
-        st.plotly_chart(fig_rosca, use_container_width=True)
-
-    # FORMULÁRIO DE REGISTRO
+    # FORMULÁRIO INTELIGENTE
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação")
     
@@ -232,24 +198,46 @@ with aba_painel:
     opcoes_subcategoria = MAPA_CATEGORIAS[grupo_orcamentario]
     categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria, key="sub_filho_main")
 
+    # Interface condicional para criação de novos objetivos com emojis livres
+    criando_novo_porquinho = (categoria == "➕ [Criar Nova Meta / Porquinho]")
+    nome_novo_fundo = ""
+    val_alvo_novo_fundo = 0.0
+    
+    if criando_novo_porquinho:
+        st.info("💡 Digite o nome do porquinho usando o emoji que preferir no seu teclado!")
+        col_n1, col_n2 = st.columns(2)
+        nome_novo_fundo = col_n1.text_input("Nome e Emoji da Nova Meta:", placeholder="Ex: ✈️ Viagem Ano Novo, 🏍️ Minha Moto")
+        val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=500.0)
+
     with st.form("formulario_envio_blindado", clear_on_submit=True):
         valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
-        tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
+        
+        # Define a direção de forma automática se estiver criando uma meta estrutural
+        if criando_novo_porquinho:
+            tipo = st.radio("Direção configurada automaticamente:", ["Faturamento ou Receita (Entrada)"], help="Entradas criam a meta alvo na nuvem.")
+        else:
+            tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
+            
         data_movimento = st.date_input("Data do evento:", datetime.date.today())
-        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Parcela do Objetivo, Mercado, Luz...")
+        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Aporte Mensal, Depósito Inicial...")
         satisfacao = st.select_slider("🧠 Nível de necessidade real?", options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"], value="2 - Útil / Desejável")
         botao_enviar = st.form_submit_button("Confirmar Lançamento")
         
     if botao_enviar and supabase:
-        if valor > 0 and descricao:
+        # Se for criação de porquinho, substitui as variáveis pelos inputs dinâmicos
+        final_subcat = nome_novo_fundo if criando_novo_porquinho else categoria
+        final_valor = val_alvo_novo_fundo if criando_novo_porquinho else valor
+        final_desc = f"Meta Criada: {nome_novo_fundo}" if criando_novo_porquinho else descricao
+        
+        if final_valor > 0 and final_desc:
             try:
                 dados_gasto = {
-                    "data": str(data_movimento), "valor": float(valor), "tipo": tipo,
-                    "descricao": descricao, "grupo_orcamentario": grupo_orcamentario,
-                    "subcategoria": categoria, "satisfacao": satisfacao
+                    "data": str(data_movimento), "valor": float(final_valor), "tipo": tipo,
+                    "descricao": final_desc, "grupo_orcamentario": grupo_orcamentario,
+                    "subcategoria": final_subcat, "satisfacao": satisfacao
                 }
                 supabase.table("movimentacoes").insert(dados_gasto).execute()
-                st.success("✅ Operação registrada com sucesso!")
+                st.success("✅ Operação sincronizada com a nuvem!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
@@ -260,7 +248,6 @@ with aba_painel:
     if supabase and not df_filtrado.empty:
         df_editor = df_filtrado[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
         df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Tipo"]
-        
         dados_editados = st.data_editor(df_editor, use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic")
         
         if st.button("💾 Salvar Alterações da Tabela"):
@@ -268,7 +255,6 @@ with aba_painel:
                 linhas_atuais_ids = set(dados_editados["ID"].tolist())
                 linhas_originais_ids = set(df_editor["ID"].tolist())
                 ids_deletados = linhas_originais_ids - linhas_atuais_ids
-                
                 for id_del in ids_deletados:
                     supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
                 for _, row in dados_editados.iterrows():
@@ -281,37 +267,25 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar alterações: {e}")
 
-# ==================== ABA 2: OS PORQUINHOS ====================
+# ==================== ABA 2: OS PORQUINHOS DINÂMICOS ====================
 with aba_porquinhos:
     st.title("🐷 Os Meus Porquinhos Dinâmicos")
-    st.caption("Acompanhe o preenchimento das suas grandes metas de patrimônio.")
+    st.caption("Esta aba lista as metas que você criou no formulário principal e calcula a evolução real pela nuvem.")
     st.markdown("---")
     
-    # PORQUINHO 1
-    if st.session_state["meta_1_valor"] > 0 and st.session_state["meta_1_nome"]:
-        st.subheader(f"{st.session_state['meta_1_nome']}")
-        falta_fundo_1 = max(st.session_state["meta_1_valor"] - acumulado_porquinho_1, 0.0)
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric(label="Valor Alvo Final", value=f"R$ {st.session_state['meta_1_valor']:,.2f}")
-        c2.metric(label="Total Já Acumulado", value=f"R$ {acumulado_porquinho_1:,.2f}", delta="Guardado")
-        c3.metric(label="Quanto Falta Poupar", value=f"R$ {falta_fundo_1:,.2f}")
-        
-        perc_1 = min(acumulado_porquinho_1 / st.session_state["meta_1_valor"], 1.0)
-        st.progress(perc_1)
-        st.markdown(f"**Progresso:** {perc_1 * 100:.1f}%")
-        st.markdown("---")
-        
-    # PORQUINHO 2
-    if st.session_state["meta_2_valor"] > 0 and st.session_state["meta_2_nome"]:
-        st.subheader(f"{st.session_state['meta_2_nome']}")
-        falta_fundo_2 = max(st.session_state["meta_2_valor"] - acumulado_porquinho_2, 0.0)
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric(label="Valor Alvo Final", value=f"R$ {st.session_state['meta_2_valor']:,.2f}")
-        m2.metric(label="Total Já Acumulado", value=f"R$ {acumulado_porquinho_2:,.2f}", delta="Guardado")
-        m3.metric(label="Quanto Falta Poupar", value=f"R$ {falta_fundo_2:,.2f}")
-        
-        perc_2 = min(acumulado_porquinho_2 / st.session_state["meta_2_valor"], 1.0)
-        st.progress(perc_2)
-        st.markdown(f"**Progresso:** {perc_2 * 100:.1f}%")
+    if dicionario_metas_alvo:
+        for nome_meta, valor_alvo in dicionario_metas_alvo.items():
+            st.subheader(f"{nome_meta}")
+            guardado = dicionario_aportes_acumulados.get(nome_meta, 0.0)
+            falta_guardar = max(valor_alvo - guardado, 0.0)
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric(label="Valor Alvo Final", value=f"R$ {valor_alvo:,.2f}")
+            c2.metric(label="Total Já Guardado", value=f"R$ {guardado:,.2f}", delta="+Patrimônio")
+            c3.metric(label="Quanto Falta Alocar", value=f"R$ {falta_guardar:,.2f}")
+            
+            st.progress(min(guardado / valor_alvo, 1.0) if valor_alvo > 0 else 0.0)
+            st.markdown(f"**Preenchimento:** {(guardado / valor_alvo) * 100:.1f}%")
+            st.markdown("---")
+    else:
+        st.info("💡 Você ainda não criou nenhum porquinho na nuvem. Vá no formulário, selecione o grupo de Aportes e escolha '➕ [Criar Nova Meta / Porquinho]' para inaugurar o seu primeiro fundo de investimentos!")
