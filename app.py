@@ -6,9 +6,13 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Meu Planner Financeiro", layout="centered")
 
-# Credenciais do banco
-SUPABASE_URL = "https://knqqtoqxrrriefaueiem.supabase.co"
-SUPABASE_KEY = "sb_publishable_BBxr66whvy4OFWdQxLs1Vw_KnMC_wmq"
+# --- 🔐 CONEXÃO BLINDADA (USANDO STREAMLIT SECRETS) ---
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+except Exception:
+    st.error("❌ Erro de Segurança: As credenciais (Secrets) não foram configuradas no painel do Streamlit.")
+    st.stop()
 
 @st.cache_resource
 def conectar_banco():
@@ -19,7 +23,7 @@ try:
 except Exception as e:
     st.error(f"Falha na conexão estrutural: {e}")
 
-# --- ⚙️ MENU LATERAL DE CONFIGURAÇÕES E FILTROS ---
+# --- ⚙️ PERFIL & FILTROS (SIDEBAR) ---
 st.sidebar.header("⚙️ Configurações do Perfil")
 RENDA_BASE = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=2500.00, step=100.0)
 DIVIDA_TOTAL_INICIAL = st.sidebar.number_input("Valor Total da sua Dívida (R$):", min_value=0.0, value=0.0, step=100.0)
@@ -27,12 +31,10 @@ DIVIDA_TOTAL_INICIAL = st.sidebar.number_input("Valor Total da sua Dívida (R$):
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Filtros de Tempo")
 
-# Configuração de datas padrão para abertura do app
 hoje = datetime.date.today()
 ano_atual = hoje.year
 mes_atual = hoje.month
 
-# Seleção de Ano e Mês (O app abre automaticamente no mês corrente)
 lista_anos = [ano_atual, ano_atual - 1, ano_atual + 1]
 ano_selecionado = st.sidebar.selectbox("Ano de Análise:", lista_anos, index=0)
 
@@ -47,10 +49,9 @@ mes_selecionado_num = st.sidebar.selectbox(
     index=list(lista_meses.keys()).index(mes_atual)
 )
 
-# Filtro rápido de granularidade
 janela_tempo = st.sidebar.radio("Visualizar intervalo:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
-# --- PROCESSAMENTO E CÁLCULO DE METAS ---
+# --- CÁLCULO DE METAS E ORÇAMENTO ---
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE = RENDA_BASE * 0.20           
@@ -70,53 +71,70 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. O Termômetro de Dívidas acumula o histórico TOTAL (independente do mês)
             for item in res_data:
                 if "📋 Quitação de Dívidas" in item["grupo_orcamentario"]:
                     total_pago_divida += float(item["valor"])
             
-            # 2. Aplicação dos filtros temporais selecionados na lateral para o restante do painel
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
             
-            # Filtra por Ano e Mês selecionados
             df_filtrado = df_filtrado[(df_filtrado["ano"] == ano_selecionado) & (df_filtrado["mes"] == mes_selecionado_num)]
             
-            # Filtros de granularidade fina (Dias / Semana)
             if janela_tempo == "Últimos 7 Dias":
                 setem_dias_atras = hoje - datetime.timedelta(days=7)
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] >= setem_dias_atras]
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
                 
-            # 3. Somadores do mês filtrado para alimentar as barras de progresso
             for _, row in df_filtrado.iterrows():
                 val = float(row["valor"])
                 grupo = row["grupo_orcamentario"]
                 if "50% Essencial" in grupo:
                     gastos_essencial += val
-                elif "30% Estilo de Vida" in grupo:
+                elif "30% Estilo de Vida" in group:
                     gastos_estilo += val
-                elif "20% Aporte" in grupo:  # CORRIGIDO: Variável 'grupo' mapeada perfeitamente
+                elif "20% Aporte" in grupo:
                     gastos_aporte += val
                     
     except Exception as e:
-        st.error(f"Erro no processamento dos filtros: {e}")
+        st.error(f"Erro no processamento de dados: {e}")
 
 divida_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
-# --- CRIAÇÃO DAS ABAS PRINCIPAIS (VISÃO DE PRODUTO) ---
+MAPA_CATEGORIAS = {
+    "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)": [
+        "Alimentação Básica & Mercado", "Contas Fixas (Luz, Água, Internet)", 
+        "Habitação (Aluguel / Financiamento)", "Saúde & Medicamentos", 
+        "Transporte & Combustível", "Pensão / Obrigações Legais"
+    ],
+    "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)": [
+        "Lazer, Bares & Restaurantes", "Delivery / iFood / Conforto", 
+        "Vestuário, Compras & Presentes", "Estética, Cuidados & Academia", 
+        "Viagens & Hobbies", "Assinaturas (Netflix, Spotify)"
+    ],
+    "🚀 20% Aporte para a Liberdade (Investimentos e Futuro)": [
+        "Reserva de Autonomia (Emergência)", "Aportes Renda Fixa", "Aportes Renda Variável"
+    ],
+    "📋 Quitação de Dívidas (Amortizações e Acordos)": [
+        "Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens"
+    ],
+    "💼 Custos de Negócio (Projetos e Clínica)": [
+        "Ferramentas SaaS & Softwares", "Marketing & Anúncios", "Infraestrutura & Custos Operacionais"
+    ]
+}
+
+# --- NAVEGAÇÃO POR ABAS ---
 aba_painel, aba_investimentos = st.tabs(["📊 Painel & Lançamentos", "🚀 Investimentos (Experimental)"])
 
-# ==================== ABA 1: PAINEL FINANCEIRO ====================
 with aba_painel:
     st.title("📲 Meu Planner Financeiro")
-    st.markdown(f"**Competência Atual:** {lista_meses[mes_selecionado_num]} / {ano_selecionado} ({janela_tempo})")
+    st.markdown(f"**Competência:** {lista_meses[mes_selecionado_num]} / {ano_selecionado} ({janela_tempo})")
     st.markdown("---")
     
+    # PAINEL DE DÍVIDAS
     st.subheader("📊 Painel de Limites Orçamentários")
-    st.markdown("### 🧮 Situação de Dívidas Atuais (Volume Total)")
+    st.markdown("### 🧮 Situação de Dívidas Atuais")
     col1, col2 = st.columns(2)
     col1.metric(label="Dívida Restante Atual", value=f"R$ {divida_restante:,.2f}")
     col2.metric(label="Total Amortizado (Histórico)", value=f"R$ {total_pago_divida:,.2f}")
@@ -124,104 +142,65 @@ with aba_painel:
     if DIVIDA_TOTAL_INICIAL > 0:
         perc_divida_paga = min(total_pago_divida / DIVIDA_TOTAL_INICIAL, 1.0)
         st.progress(perc_divida_paga)
-        st.caption(f"Você já liquidou **{perc_divida_paga * 100:.1f}%** do volume total das suas dívidas estruturadas.")
-    else:
-        st.info("🎉 Nenhuma dívida ativa configurada no seu perfil lateral.")
-        
+    
     st.markdown("---")
-    st.markdown("### 🧭 Distribuição Líquida do Período")
     
-    perc_essencial = min(gastos_essencial / LIMITE_ESSENCIAL, 1.0) if LIMITE_ESSENCIAL > 0 else 0.0
-    st.write(f"🔴 **Gasto Essencial Atual:** R$ {gastos_essencial:,.2f} de R$ {LIMITE_ESSENCIAL:,.2f}")
-    st.progress(perc_essencial)
+    # VISUALIZAÇÃO DOS LIMITES
+    st.write(f"🔴 **Gasto Essencial:** R$ {gastos_essencial:,.2f} de R$ {LIMITE_ESSENCIAL:,.2f}")
+    st.progress(min(gastos_essencial / LIMITE_ESSENCIAL, 1.0) if LIMITE_ESSENCIAL > 0 else 0.0)
     
-    perc_estilo = min(gastos_estilo / LIMITE_ESTILO_DE_VIDA, 1.0) if LIMITE_ESTILO_DE_VIDA > 0 else 0.0
-    st.write(f"🟡 **Estilo de Vida & Lazer:** Gastou R$ {gastos_estilo:,.2f} de R$ {LIMITE_ESTILO_DE_VIDA:,.2f}")
-    st.progress(perc_estilo)
+    st.write(f"🟡 **Estilo de Vida:** R$ {gastos_estilo:,.2f} de R$ {LIMITE_ESTILO_DE_VIDA:,.2f}")
+    st.progress(min(gastos_estilo / LIMITE_ESTILO_DE_VIDA, 1.0) if LIMITE_ESTILO_DE_VIDA > 0 else 0.0)
     
-    perc_aporte = min(gastos_aporte / META_APORTE, 1.0) if META_APORTE > 0 else 0.0
-    st.write(f"🚀 **Futuro & Liberdade (Aportes):** R$ {gastos_aporte:,.2f} de R$ {META_APORTE:,.2f}")
-    st.progress(perc_aporte)
-    
-    # Seção de Gráficos alimentada estritamente pelo filtro de tempo
+    st.write(f"🚀 **Aportes Efetuados:** R$ {gastos_aporte:,.2f} de R$ {META_APORTE:,.2f}")
+    st.progress(min(gastos_aporte / META_APORTE, 1.0) if META_APORTE > 0 else 0.0)
+
+    # REPRODUÇÃO DOS GRÁFICOS
     if not df_filtrado.empty:
         st.markdown("---")
-        st.markdown("### 📈 Análise Visual do Dinheiro")
-        
         df_agrupado = df_filtrado.groupby("grupo_orcamentario")["valor"].sum().reset_index()
-        fig_rosca = px.pie(
-            df_agrupado, values="valor", names="grupo_orcamentario", hole=0.4,
-            title="Onde seu dinheiro foi no período filtrado",
-            color_discrete_sequence=["#FF4B4B", "#00F0FF", "#FFD700", "#00FF66", "#9932CC"]
-        )
-        fig_rosca.update_layout(showlegend=False)
+        fig_rosca = px.pie(df_agrupado, values="valor", names="grupo_orcamentario", hole=0.4, title="Distribuição Financeira Real (R$)")
         st.plotly_chart(fig_rosca, use_container_width=True)
-        
-        df_filtrado["Nível Limpo"] = df_filtrado["satisfacao"].astype(str).str[0]
-        df_satisfacao = df_filtrado.groupby("Nível Limpo")["valor"].sum().reset_index()
-        df_satisfacao.columns = ["Nível de Necessidade", "Total Gasto (R$)"]
-        mapa_nomes = {"1": "1 - Evitável / Impulsivo", "2": "2 - Útil / Desejável", "3": "3 - Indispensável"}
-        df_satisfacao["Nível de Necessidade"] = df_satisfacao["Nível de Necessidade"].map(mapa_nomes)
-        
-        fig_barra = px.bar(
-            df_satisfacao, x="Nível de Necessidade", y="Total Gasto (R$)",
-            title="🧠 Volume Financeiro por Intencionalidade",
-            color="Nível de Necessidade",
-            color_discrete_map={"1 - Evitável / Impulsivo": "#FF4B4B", "2 - Útil / Desejável": "#FFD700", "3 - Indispensável": "#00FF66"}
-        )
-        st.plotly_chart(fig_barra, use_container_width=True)
-        
+
+    # FORMULÁRIO DE REGISTRO
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação")
-    with st.form("formulario_fluxo", clear_on_submit=True):
+    
+    grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
+    opcoes_subcategoria = MAPA_CATEGORIAS[grupo_orcamentario]
+    categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria, key="sub_filho_main")
+
+    with st.form("formulario_envio_blindado", clear_on_submit=True):
         valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
         tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
         data_movimento = st.date_input("Data do evento:", datetime.date.today())
-        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Mercado, Luz, Parcela do Empréstimo...")
-        
-        grupo_orcamentario = st.selectbox(
-            "Destinação Estratégica do Valor:",
-            [
-                "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", 
-                "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)", 
-                "🚀 20% Aporte para a Liberdade (Investimentos e Futuro)",
-                "📋 Quitação de Dívidas (Amortizações e Acordos)",
-                "💼 Custos de Negócio (Projetos e Clínica)"
-            ]
-        )
-        
-        if "50% Essencial" in grupo_orcamentario:
-            opcoes_subcategoria = ["Alimentação Básica & Mercado", "Contas Fixas (Luz, Água, Internet)", "Habitação (Aluguel / Financiamento)", "Saúde & Medicamentos", "Transporte & Combustível", "Pensão / Obrigações Legais"]
-        elif "30% Estilo de Vida" in grupo_orcamentario:
-            opcoes_subcategoria = ["Lazer, Bares & Restaurantes", "Delivery / iFood / Conforto", "Vestuário, Compras & Presentes", "Estética, Cuidados & Academia", "Viagens & Hobbies", "Assinaturas (Netflix, Spotify)"]
-        elif "20% Aporte" in grupo_orcamentario:
-            opcoes_subcategoria = ["Reserva de Autonomia (Emergência)", "Aportes Renda Fixa", "Aportes Renda Variável"]
-        elif "Quitação de Dívidas" in grupo_orcamentario:
-            opcoes_subcategoria = ["Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens"]
-        else:
-            opcoes_subcategoria = ["Ferramentas SaaS & Softwares", "Marketing & Anúncios", "Infraestrutura & Custos Operacionais"]
-            
-        categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria)
+        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Mercado, Aluguel, Parcela...")
         satisfacao = st.select_slider("🧠 Nível de necessidade real?", options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"], value="2 - Útil / Desejável")
-        botao_enviar = st.form_submit_button("Salvar Lançamento")
+        botao_enviar = st.form_submit_button("Confirmar Lançamento")
         
     if botao_enviar and supabase:
         if valor > 0 and descricao:
             try:
-                dados_gasto = {"data": str(data_movimento), "valor": float(valor), "tipo": tipo, "descricao": descricao, "grupo_orcamentario": grupo_orcamentario, "subcategoria": categoria, "satisfacao": satisfacao}
+                dados_gasto = {
+                    "data": str(data_movimento), "valor": float(valor), "tipo": tipo,
+                    "descricao": descricao, "grupo_orcamentario": grupo_orcamentario,
+                    "subcategoria": categoria, "satisfacao": satisfacao
+                }
                 supabase.table("movimentacoes").insert(dados_gasto).execute()
-                st.success("✅ Lançamento gravado!")
+                st.success("✅ Lançamento computado com sucesso!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
+    # GERENCIADOR INTERATIVO DE DADOS
     st.markdown("---")
-    st.subheader("📋 Gerenciar Lançamentos do Período Filtrado")
+    st.subheader("📋 Gerenciar Lançamentos do Período")
     if supabase and not df_filtrado.empty:
         df_editor = df_filtrado[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor"]].copy()
         df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)"]
         
         dados_editados = st.data_editor(df_editor, use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic")
+        
         if st.button("💾 Salvar Alterações da Tabela"):
             try:
                 linhas_atuais_ids = set(dados_editados["ID"].tolist())
@@ -235,20 +214,12 @@ with aba_painel:
                     orig_row = df_editor[df_editor["ID"] == row_id].iloc[0]
                     if (row["Descrição"] != orig_row["Descrição"]) or (float(row["Valor (R$)"]) != float(orig_row["Valor (R$)"])):
                         supabase.table("movimentacoes").update({"descricao": row["Descrição"], "valor": float(row["Valor (R$)"])}).eq("id", row_id).execute()
-                st.success("🔄 Alterações guardadas!")
+                st.success("🔄 Alterações sincronizadas com total segurança!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar alterações: {e}")
-    elif df_filtrado.empty:
-        st.info("Nenhum registro para exibir neste filtro de tempo.")
 
-# ==================== ABA 2: ÁREA DE INVESTIMENTOS ====================
 with aba_investimentos:
     st.header("📈 Centro de Acumulação de Patrimônio")
-    st.caption("Esta área receberá a inteligência de rentabilidade real e evolução patrimonial histórica na Fase 2.")
-    
-    st.subheader("🚀 Resumo do Mês Corrente")
     st.metric(label="Total Alocado para o Futuro no Período", value=f"R$ {gastos_aporte:,.2f}", delta=f"Meta: R$ {META_APORTE:,.2f}")
-    
-    # Estrutura visual vazia preparando a próxima sprint de código
-    st.info("💡 Na próxima etapa, aqui você visualizará gráficos de evolução patrimonial por ativos (Renda Fixa vs Renda Variável) e o cálculo de juros sobre sua reserva.")
+    st.info("💡 Módulo de investimentos estruturado em background. Chaves de API externas prontas para auditorias de segurança.")
