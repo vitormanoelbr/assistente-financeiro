@@ -51,6 +51,7 @@ mes_selected_num = st.sidebar.selectbox(
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
 # --- PROCESSAMENTO LÓGICO DE DADOS ---
+# Metas do método base
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE_MENSAL = RENDA_BASE * 0.20           
@@ -114,7 +115,7 @@ if supabase:
                 if "Saída" in tipo_mov:
                     if "50% Essencial" in grupo:
                         gastos_essencial += val
-                    elif "30% Estilo de Vida" in group:
+                    elif "30% Estilo de Vida" in grupo:
                         gastos_estilo += val
                     elif "20% Aporte" in grupo:
                         gastos_aporte_mes += val
@@ -181,26 +182,25 @@ with aba_painel:
     st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
-    # --- DASHBOARD DE NÍVEL DE NECESSIDADE REAL (SOLICITADO) ---
+    # --- 🧠 DASHBOARD DE NÍVEL DE NECESSIDADE CORRIGIDO ---
     if not df_filtrado.empty:
         st.markdown("---")
         st.subheader("🧠 Raio-X de Necessidade Real (Mês Filtrado)")
         
-        # Limpa as strings antigas pegando o primeiro caractere numérico do slider
         df_filtrado["Nível Numérico"] = df_filtrado["satisfacao"].astype(str).str[0]
-        df_necessidade = df_filtrado.groupby("Nível Numérico")["valor"].sum().reset_index()
-        df_necessidade.columns = ["Nível de Importância", "Total Gasto (R$)"]
+        # Correção da variável fixa de agrupamento
+        df_necessidade_real = df_filtrado.groupby("Nível Numérico")["valor"].sum().reset_index()
+        df_necessidade_real.columns = ["Nível de Importância", "Total Gasto (R$)"]
         
         mapa_nomes = {
             "1": "🚨 1 - Impulsivo / Evitável", 
             "2": "🟡 2 - Útil / Desejável", 
             "3": "🟢 3 - Indispensável"
         }
-        df_necessidade["Nível de Importância"] = df_necessidade["Nível de Importância"].map(mapa_nomes)
+        df_necessidade_real["Nível de Importância"] = df_necessidade_real["Nível de Importance"].map(mapa_nomes)
         
-        # Gráfico analítico horizontal para tomada de decisão
         fig_necessidade = px.bar(
-            df_necessidade,
+            df_necessidade_real, # Variável perfeitamente mapeada aqui
             y="Nível de Importância",
             x="Total Gasto (R$)",
             orientation='h',
@@ -218,6 +218,7 @@ with aba_painel:
     # FORMULÁRIO DE REGISTRO
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação")
+    
     grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
     opcoes_subcategoria = MAPA_CATEGORIAS[grupo_orcamentario]
     categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria, key="sub_filho_main")
@@ -257,7 +258,7 @@ with aba_painel:
                     "subcategoria": final_subcat, "satisfacao": satisfacao
                 }
                 supabase.table("movimentacoes").insert(dados_gasto).execute()
-                st.success("✅ Operação sincronizada com a nuvem!")
+                st.success("✅ Operação registrada com sucesso!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
@@ -287,14 +288,13 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar alterações: {e}")
 
-# ==================== ABA 2: MEUS PORQUINHOS (NOME SIMPLIFICADO) ====================
+# ==================== ABA 2: MEUS PORQUINHOS ====================
 with aba_porquinhos:
     st.title("🐷 Meus Porquinhos")
     st.caption("Acompanhe o preenchimento das suas grandes metas de patrimônio armazenadas na nuvem.")
     st.markdown("---")
     
     if dicionario_metas_alvo:
-        # Criação do DataFrame de porquinhos para gerar o Dashboard de Metas Coletivo
         dados_metas_grafico = []
         
         for nome_meta, valor_alvo in dicionario_metas_alvo.items():
@@ -309,10 +309,9 @@ with aba_porquinhos:
             dados_metas_grafico.append({
                 "Meta": nome_meta,
                 "Estado": "Falta Pagar (R$)",
-                "Valor": falta_fundo_1 := falta_guardar
+                "Valor": falta_guardar
             })
             
-            # Cards individuais textuais por meta
             st.subheader(f"{nome_meta}")
             c1, c2, c3 = st.columns(3)
             c1.metric(label="Valor Alvo Final", value=f"R$ {valor_alvo:,.2f}")
@@ -323,7 +322,6 @@ with aba_porquinhos:
             st.markdown(f"**Preenchimento:** {(guardado / valor_alvo) * 100:.1f}%")
             st.markdown("---")
             
-        # --- DASHBOARD VISUAL DOS PORQUINHOS (SOLICITADO) ---
         st.subheader("📈 Dashboard Comparativo de Objetivos")
         df_porquinhos_fig = pd.DataFrame(dados_metas_grafico)
         
@@ -336,6 +334,5 @@ with aba_porquinhos:
             color_discrete_map={"Guardado (R$)": "#00FF66", "Falta Pagar (R$)": "#444444"}
         )
         st.plotly_chart(fig_porquinhos, use_container_width=True)
-        
     else:
         st.info("💡 Você ainda não criou nenhum porquinho na nuvem.")
