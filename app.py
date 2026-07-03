@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import io
 
 st.set_page_config(page_title="Assistente Financeiro Vitor Manoel", layout="wide")
 
@@ -48,32 +49,29 @@ arquivo_carregado = st.sidebar.file_uploader("Suba o CSV do Banco Inter aqui:", 
 
 if arquivo_carregado is not None:
     try:
-        # Lendo as linhas para descobrir onde começa o cabeçalho real
-        linhas = arquivo_carregado.readlines()
-        linha_cabecalho = 0
+        # Lê o conteúdo bruto do arquivo para limpar o cabeçalho do banco na força bruta
+        conteudo_bruto = arquivo_carregado.read().decode('utf-8', errors='ignore')
+        linhas = conteudo_bruto.splitlines()
         
-        # Procura a linha que contém termos chaves de colunas para pular o lixo do topo
-        for i, linha in enumerate(linhas):
-            linha_texto = linha.decode('utf-8', errors='ignore').lower()
-            if 'data' in linha_texto and ('valor' in linha_texto or 'desc' in linha_texto or 'hist' in linha_texto):
-                linha_cabecalho = i
-                break
+        # Filtra e mantém apenas as linhas que têm dados reais (que contêm o caractere divisor do CSV)
+        linhas_uteis_separador = [l for l in linhas if ';' in l or ',' in l]
         
-        # Reseta o ponteiro do arquivo e pula as linhas inúteis do topo
-        arquivo_carregado.seek(0)
+        # Reconstrói o arquivo virtual pronto para o Pandas
+        arquivo_limpo = io.StringIO('\n'.join(linhas_uteis_separador))
         
-        try:
-            # CORRIGIDO: Removido o 'p' que gerava o 'pskiprows'
-            df_bruto = pd.read_csv(arquivo_carregado, sep=';', encoding='utf-8', decimal=',', thousands='.', skiprows=linha_cabecalho)
-            if len(df_bruto.columns) < 3:
-                raise ValueError
-        except:
-            arquivo_carregado.seek(0)
-            df_bruto = pd.read_csv(arquivo_carregado, sep=',', encoding='utf-8', decimal='.', thousands=',', skiprows=linha_cabecalho)
+        # Identifica se o arquivo usa ponto e vírgula ou vírgula
+        primeira_linha = linhas_uteis_separador[0] if linhas_uteis_separador else ""
+        separador = ';' if ';' in primeira_linha else ','
         
+        # Faz a leitura do arquivo limpo sem usar o parâmetro skiprows que estava quebrando
+        if separador == ';':
+            df_bruto = pd.read_csv(arquivo_limpo, sep=';', decimal=',', thousands='.')
+        else:
+            df_bruto = pd.read_csv(arquivo_limpo, sep=',', decimal='.', thousands=',')
+            
         df_bruto.columns = [col.strip() for col in df_bruto.columns]
         
-        # Identificação de colunas por posição física
+        # Identificação de colunas por posição física para ignorar nomes alterados
         col_data = df_bruto.columns[0]
         col_desc = df_bruto.columns[1]
         col_valor = df_bruto.columns[2]
@@ -82,15 +80,16 @@ if arquivo_carregado is not None:
         df['Data'] = df_bruto[col_data]
         df['Descricao'] = df_bruto[col_desc]
         
-        # Limpeza do campo de valor
+        # Limpeza pesada na coluna de valores para evitar quebras por strings
         valores_limpos = df_bruto[col_valor].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
         df['Valor'] = pd.to_numeric(valores_limpos, errors='coerce')
         
-        # Classificação
+        # Classificação automática
         res_classif = df['Descricao'].apply(classificar_transacao)
         df['Categoria'] = [r[0] for r in res_classif]
         df['Grupo_Orcamentario'] = [r[1] for r in res_classif]
         
+        # Separa apenas as despesas legítimas
         df_despesas = df[~df['Grupo_Orcamentario'].isin(['Movimentação Interna', 'Descontinuado'])].copy()
         df_despesas['Valor_Absoluto'] = df_despesas['Valor'].abs()
         
