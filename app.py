@@ -91,34 +91,43 @@ perc_aporte = min(gastos_aporte / META_APORTE, 1.0) if META_APORTE > 0 else 0.0
 st.write(f"🚀 **Futuro & Liberdade (Aportes):** R$ {gastos_aporte:,.2f} de R$ {META_APORTE:,.2f}")
 st.progress(perc_aporte)
 
-# --- NOVA SEÇÃO DE GRÁFICOS INTELIGENTES ---
+# --- SEÇÃO DE GRÁFICOS ANALÍTICOS (CORRIGIDA) ---
 if not df_todos_dados.empty:
     st.markdown("---")
     st.markdown("### 📈 Análise Visual do Dinheiro")
     
-    # Gráfico 1: Onde o dinheiro está indo de verdade
+    # Gráfico 1: Distribuição por Volume Financeiro (R$)
     df_agrupado = df_todos_dados.groupby("grupo_orcamentario")["valor"].sum().reset_index()
     fig_rosca = px.pie(
         df_agrupado, 
         values="valor", 
         names="grupo_orcamentario", 
         hole=0.4,
-        title="Divisão Real dos Gastos Acumulados",
+        title="Divisão Real dos Gastos Acumulados (R$)",
         color_discrete_sequence=["#FF4B4B", "#00F0FF", "#FFD700", "#00FF66", "#9932CC"]
     )
     fig_rosca.update_layout(showlegend=False)
     st.plotly_chart(fig_rosca, use_container_width=True)
     
-    # Gráfico 2: Psicologia de Consumo (O quanto os gastos são mesmo úteis)
-    df_satisfacao = df_todos_dados.groupby("satisfacao")["valor"].count().reset_index()
-    df_satisfacao.columns = ["Nível de Necessidade", "Quantidade de Gastos"]
+    # Gráfico 2: Raio-X por Volume de Dinheiro (R$) corrigindo duplicidade de strings antigas
+    df_todos_dados["Nível Limpo"] = df_todos_dados["satisfacao"].astype(str).str[0]
+    df_satisfacao = df_todos_dados.groupby("Nível Limpo")["valor"].sum().reset_index()
+    df_satisfacao.columns = ["Nível de Necessidade", "Total Gasto (R$)"]
+    
+    mapa_nomes = {"1": "1 - Evitável / Impulsivo", "2": "2 - Útil / Desejável", "3": "3 - Indispensável"}
+    df_satisfacao["Nível de Necessidade"] = df_satisfacao["Nível de Necessidade"].map(mapa_nomes)
+    
     fig_barra = px.bar(
         df_satisfacao,
         x="Nível de Necessidade",
-        y="Quantidade de Gastos",
-        title="🧠 Raio-X de Intencionalidade (Frequência de Compras)",
+        y="Total Gasto (R$)",
+        title="🧠 Raio-X de Intencionalidade (Onde estão os ralos de dinheiro?)",
         color="Nível de Necessidade",
-        color_discrete_sequence=["#FFA500", "#32CD32", "#FF4500"]
+        color_discrete_map={
+            "1 - Evitável / Impulsivo": "#FF4B4B",
+            "2 - Útil / Desejável": "#FFD700",
+            "3 - Indispensável": "#00FF66"
+        }
     )
     st.plotly_chart(fig_barra, use_container_width=True)
 
@@ -157,7 +166,7 @@ with st.form("formulario_fluxo", clear_on_submit=True):
     categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria)
     
     satisfacao = st.select_slider(
-        "🧠 Nível de necessidade real deste evento?",
+        "🧠 Nível de necessidade real deste gasto?",
         options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"],
         value="2 - Útil / Desejável"
     )
