@@ -52,19 +52,31 @@ if arquivo_carregado is not None:
         
         col_data = [c for c in df_bruto.columns if 'data' in c.lower()][0]
         col_desc = [c for c in df_bruto.columns if 'desc' in c.lower() or 'historico' in c.lower()][0]
-        col_valor = [c for c in df_bruto.columns if 'valor' in c.lower()][0]
+        # Lendo o CSV do Inter tratando o formato de moeda brasileiro
+        df_bruto = pd.read_csv(arquivo_carregado, sep=';', encoding='utf-8', decimal=',', thousands='.')
+        df_bruto.columns = [col.strip() for col in df_bruto.columns]
+        
+        # Mapeamento robusto: tenta por nome, se falhar pega pela posição física das colunas
+        try:
+            col_data = [c for c in df_bruto.columns if 'data' in c.lower()][0]
+        except IndexError:
+            col_data = df_bruto.columns[0] # Pega a primeira coluna se não achar pelo nome
+            
+        try:
+            col_desc = [c for c in df_bruto.columns if 'desc' in c.lower() or 'historico' in c.lower()][0]
+        except IndexError:
+            col_desc = df_bruto.columns[1] # Pega a segunda coluna
+            
+        try:
+            col_valor = [c for c in df_bruto.columns if 'valor' in c.lower()][0]
+        except IndexError:
+            col_valor = df_bruto.columns[2] # Pega a terceira coluna
         
         df = pd.DataFrame({
             'Data': df_bruto[col_data],
             'Descricao': df_bruto[col_desc],
             'Valor': df_bruto[col_valor]
         })
-        
-        df['Categoria'], df['Grupo_Orcamentario'] = zip(*df['Descricao'].apply(classificar_transacao))
-        df_despesas = df[(df['Valor'] < 0) & (~df['Grupo_Orcamentario'].isin(['Movimentação Interna', 'Descontinuado']))].copy()
-        df_despesas['Valor_Absoluto'] = df_despesas['Valor'].abs()
-        
-        total_essencial = df_despesas[df_despesas['Grupo_Orcamentario'] == '50% Essencial']['Valor_Absoluto'].sum()
         total_estilo = df_despesas[df_despesas['Grupo_Orcamentario'] == '30% Estilo de Vida']['Valor_Absoluto'].sum()
         total_negocio = df_despesas[df_despesas['Grupo_Orcamentario'] == 'Custos de Negócio']['Valor_Absoluto'].sum()
         total_geral = df_despesas['Valor_Absoluto'].sum()
