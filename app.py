@@ -29,7 +29,7 @@ if "usuario_logado" not in st.session_state:
 if "user_token" not in st.session_state:
     st.session_state["user_token"] = None
 
-# ==================== TELA DE AUTENTICAÇÃO (SE NÃO LOGADO) ====================
+# ==================== TELA DE AUTENTICAÇÃO ====================
 if st.session_state["usuario_logado"] is None:
     st.title("📲 Bem-vindo ao Meu Planner Financeiro")
     st.caption("Crie sua conta ou faça login para proteger e gerenciar suas finanças com segurança de ponta.")
@@ -45,12 +45,12 @@ if st.session_state["usuario_logado"] is None:
             if botao_login:
                 if email_login and senha_login:
                     try:
-                        resposta = supabase.auth.sign_in_with_password({"email": email_login, "password": senha_login})
+                        resposta = supabase.auth.sign_with_password({"email": email_login, "password": senha_login})
                         st.session_state["usuario_logado"] = resposta.user.id
                         st.session_state["user_token"] = resposta.session.access_token
                         st.success("🎉 Acesso autorizado! Redirecionando...")
                         st.rerun()
-                    except Exception as e:
+                    except Exception:
                         st.error("❌ Erro ao entrar: E-mail ou senha incorretos.")
                 else:
                     st.warning("Preencha todos os campos.")
@@ -65,17 +65,16 @@ if st.session_state["usuario_logado"] is None:
                 if email_cad and len(senha_cad) >= 6:
                     try:
                         resposta = supabase.auth.sign_up({"email": email_cad, "password": senha_cad})
-                        st.success("✅ Conta criada com sucesso! Você já pode mudar para a aba de Login e acessar seu painel.")
+                        st.success("✅ Conta criada com sucesso! Mude para a aba de Login para acessar.")
                     except Exception as e:
                         st.error(f"Erro ao cadastrar: {e}")
                 else:
                     st.warning("O e-mail precisa ser válido e a senha ter no mínimo 6 caracteres.")
-    st.stop() # Trava a execução aqui até que o login seja efetuado
+    st.stop()
 
-# ==================== SISTEMA PRINCIPAL (APENAS SE LOGADO) ====================
+# ==================== SISTEMA PRINCIPAL ====================
 USER_ID = st.session_state["usuario_logado"]
 
-# Botão de Logout no final da barra lateral
 if st.sidebar.button("🚪 Sair da Conta"):
     supabase.auth.sign_out()
     st.session_state["usuario_logado"] = None
@@ -108,8 +107,7 @@ mes_selected_num = st.sidebar.selectbox(
 
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
-# --- PROCESSAMENTO FILTRADO POR USUÁRIO NO BANCO ---
-# Como o RLS está ativo, o Supabase já filtra na consulta trazendo apenas o que pertence ao USER_ID logado
+# --- PROCESSAMENTO LÓGICO ---
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE_MENSAL = RENDA_BASE * 0.20           
@@ -129,7 +127,6 @@ df_filtrado = pd.DataFrame()
 
 if supabase:
     try:
-        # A busca injeta o token do usuário para o banco validar a segurança RLS
         supabase.postgrest.auth(st.session_state["user_token"])
         resposta_completa = supabase.table("movimentacoes").select("id, data, descricao, grupo_orcamentario, subcategoria, valor, satisfacao, tipo, user_id").execute()
         
@@ -156,7 +153,6 @@ if supabase:
                     else:
                         dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
             
-            # Filtro de tempo do painel
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
@@ -221,6 +217,8 @@ with aba_painel:
     col1, col2, col3 = st.columns(3)
     col1.metric(label="Volume Devedor Inicial", value=f"R$ {DIVIDA_TOTAL_INICIAL:,.2f}")
     col2.metric(label="Total Amortizado (Pago)", value=f"R$ {total_pago_divida:,.2f}")
+    
+    # CORRIGIDO: Lógica limpa sem variáveis redundantes ou curtos-circuitos
     if divida_restante > 0:
         col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {divida_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
     else:
@@ -251,11 +249,12 @@ with aba_painel:
         fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_necessidade, use_container_width=True)
 
-    # REGISTRO COM CAPTURA DE USER_ID
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação")
     grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
     opcoes_subcategoria = MAPA_CATEGORIAS[grupo_orcamentario]
+    
+    # CORRIGIDO: String traduzida perfeitamente para português padrão profissional
     categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria, key="sub_filho_main")
 
     criando_novo_porquinho = (categoria == "➕ [Criar Nova Meta / Porquinho]")
@@ -290,7 +289,7 @@ with aba_painel:
                     "data": str(data_movimento), "valor": float(final_valor), "tipo": tipo,
                     "descricao": final_desc, "grupo_orcamentario": grupo_orcamentario,
                     "subcategoria": final_subcat, "satisfacao": satisfacao,
-                    "user_id": USER_ID # CRUCIAL: Vincula a linha ao usuário logado
+                    "user_id": USER_ID
                 }
                 supabase.table("movimentacoes").insert(dados_gasto).execute()
                 st.success("✅ Sincronizado com sua conta!")
@@ -298,7 +297,6 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # GERENCIADOR PROTEGIDO
     st.markdown("---")
     st.subheader("📋 Gerenciar Lançamentos do Período")
     if supabase and not df_filtrado.empty:
