@@ -47,11 +47,6 @@ arquivo_carregado = st.sidebar.file_uploader("Suba o CSV do Banco Inter aqui:", 
 
 if arquivo_carregado is not None:
     try:
-        df_bruto = pd.read_csv(arquivo_carregado, sep=';', encoding='utf-8', decimal=',', thousands='.')
-        df_bruto.columns = [col.strip() for col in df_bruto.columns]
-        
-        col_data = [c for c in df_bruto.columns if 'data' in c.lower()][0]
-        col_desc = [c for c in df_bruto.columns if 'desc' in c.lower() or 'historico' in c.lower()][0]
         # Lendo o CSV do Inter tratando o formato de moeda brasileiro
         df_bruto = pd.read_csv(arquivo_carregado, sep=';', encoding='utf-8', decimal=',', thousands='.')
         df_bruto.columns = [col.strip() for col in df_bruto.columns]
@@ -77,7 +72,6 @@ if arquivo_carregado is not None:
             'Descricao': df_bruto[col_desc],
             'Valor': df_bruto[col_valor]
         })
-        total_estilo = df_despesas[df_despesas['Grupo_Orcamentario'] == '30% Estilo de Vida']['Valor_Absoluto'].sum()
         total_negocio = df_despesas[df_despesas['Grupo_Orcamentario'] == 'Custos de Negócio']['Valor_Absoluto'].sum()
         total_geral = df_despesas['Valor_Absoluto'].sum()
         
