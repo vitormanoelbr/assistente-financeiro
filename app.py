@@ -23,18 +23,28 @@ try:
 except Exception as e:
     st.error(f"Falha na conexão estrutural: {e}")
 
+# --- 🎯 PAINEL DE METAS E PARÂMETROS PADRÃO (ALTERE AQUI DEFINITIVAMENTE) ---
+# Altere os textos e valores abaixo para que o sistema já abra com as suas metas definitivas
+NOME_META_1_PADRAO = "🧱 Reserva de Emergência"
+VALOR_META_1_PADRAO = 5000.00
+
+NOME_META_2_PADRAO = "🏡 Comprar Casa" # Modificado para o seu novo objetivo com emoji correspondente
+VALOR_META_2_PADRAO = 10000.00
+
 # --- ⚙️ MENU LATERAL DE CONFIGURAÇÕES (SIDEBAR) ---
 st.sidebar.header("⚙️ Configurações do Perfil")
 RENDA_BASE = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=2500.00, step=100.0)
 
 st.sidebar.markdown("---")
 st.sidebar.header("🎯 Metas de Investimento (Porquinhos)")
-st.sidebar.caption("Defina os objetivos para os seus aportes históricos.")
-nome_fundo_1 = st.sidebar.text_input("Nome do Objetivo 1:", value="Reserva de Emergência")
-alvo_fundo_1 = st.sidebar.number_input("Valor Alvo do Objetivo 1 (R$):", min_value=0.0, value=5000.00, step=500.0)
+st.sidebar.caption("Visualize ou ajuste temporariamente os seus objetivos nesta sessão.")
 
-nome_fundo_2 = st.sidebar.text_input("Nome do Objetivo 2:", value="Comprar Carro")
-alvo_fundo_2 = st.sidebar.number_input("Valor Alvo do Objetivo 2 (R$):", min_value=0.0, value=80000.00, step=1000.0)
+# Inputs da barra lateral inicializados com os valores padrões definidos no topo do código
+nome_fundo_1 = st.sidebar.text_input("Nome do Objetivo 1:", value=NOME_META_1_PADRAO)
+alvo_fundo_1 = st.sidebar.number_input("Valor Alvo do Objetivo 1 (R$):", min_value=0.0, value=VALOR_META_1_PADRAO, step=500.0)
+
+nome_fundo_2 = st.sidebar.text_input("Nome do Objetivo 2:", value=NOME_META_2_PADRAO)
+alvo_fundo_2 = st.sidebar.number_input("Valor Alvo do Objetivo 2 (R$):", min_value=0.0, value=VALOR_META_2_PADRAO, step=1000.0)
 
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Filtros de Tempo")
@@ -68,11 +78,9 @@ gastos_essencial = 0.0
 gastos_estilo = 0.0
 gastos_aporte_mes = 0.0
 
-# Variaveis de Divida (Voltando ao motor original que calcula pelo banco)
 DIVIDA_TOTAL_INICIAL = 0.0
 total_pago_divida = 0.0
 
-# Variaveis dos Porquinhos
 acumulado_porquinho_1 = 0.0
 acumulado_porquinho_2 = 0.0
 
@@ -87,14 +95,13 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. VARREDURA HISTÓRICA ACUMULADA (Dívidas e Porquinhos calculam pelo banco inteiro)
             for item in res_data:
                 grupo = item["grupo_orcamentario"]
                 subcat = item["subcategoria"]
                 tipo_mov = item.get("tipo", "Gasto ou Investimento (Saída)")
                 val_mov = float(item["valor"])
                 
-                # Motor de Dívidas Original Restaurado
+                # Motor de Dívidas
                 if "📋 Quitação de Dívidas" in grupo:
                     if "Entrada" in tipo_mov:
                         DIVIDA_TOTAL_INICIAL += val_mov
@@ -108,7 +115,7 @@ if supabase:
                     elif subcat == nome_fundo_2:
                         acumulado_porquinho_2 += val_mov
             
-            # 2. FILTRO TEMPORAL DO PERÍODO (Para o orçamento líquido mensal e gerenciador)
+            # Filtro Temporal do Período
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
@@ -164,13 +171,12 @@ MAPA_CATEGORIAS = {
 # --- NAVEGAÇÃO ---
 aba_painel, aba_porquinhos = st.tabs(["📊 Painel & Lançamentos", "🐷 Os Meus Porquinhos"])
 
-# ==================== ABA 1: OPERAÇÕES PRINCIPAIS E DÍVIDAS ====================
+# ==================== ABA 1: PAINEL & LANÇAMENTOS ====================
 with aba_painel:
     st.title("📲 Meu Planner Financeiro")
     st.markdown(f"**Competência do Painel:** {lista_meses[mes_selected_num]} / {ano_selected} ({janela_tempo})")
     st.markdown("---")
     
-    # RESTAURAÇÃO COMPLETA DO PAINEL DE DÍVIDAS ORIGINAL
     st.subheader("📊 Painel de Limites Orçamentários")
     st.markdown("### 🧮 Situação de Dívidas Estruturadas")
     
@@ -188,7 +194,7 @@ with aba_painel:
         st.progress(perc_divida_paga)
         st.caption(f"Progresso de Liquidação: **{perc_divida_paga * 100:.1f}%** do montante quitado.")
     else:
-        st.info("💡 Nenhuma dívida ativa mapeada no histórico. Para abrir uma dívida, registre uma 'Entrada' no grupo de Dívidas.")
+        st.info("💡 Nenhuma dívida ativa mapeada no histórico.")
     
     st.markdown("---")
     st.markdown("### 🧭 Distribuição Líquida do Período")
@@ -214,13 +220,13 @@ with aba_painel:
     
     grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
     opcoes_subcategoria = MAPA_CATEGORIAS[grupo_orcamentario]
-    categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria, key="sub_filho_main")
+    categoria = st.selectbox("Subcategoria Corresponding:", opcoes_subcategoria, key="sub_filho_main")
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
         valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
-        tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True, help="Entrada para Dívida Nova. Saída para Pagamentos/Gastos.")
+        tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
         data_movimento = st.date_input("Data do evento:", datetime.date.today())
-        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Parcela Empréstimo, Mercado, Combustível...")
+        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Mercado, Parcela de Financiamento...")
         satisfacao = st.select_slider("🧠 Nível de necessidade real?", options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"], value="2 - Útil / Desejável")
         botao_enviar = st.form_submit_button("Confirmar Lançamento")
         
@@ -238,7 +244,7 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # GERENCIADOR FILTRADO POR DATA (DO JEITO QUE VOCÊ GOSTA)
+    # GERENCIADOR
     st.markdown("---")
     st.subheader("📋 Gerenciar Lançamentos do Período")
     if supabase and not df_filtrado.empty:
@@ -264,10 +270,8 @@ with aba_painel:
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar alterações: {e}")
-    elif df_filtrado.empty:
-        st.info("Nenhum lançamento encontrado para os filtros de data deste período.")
 
-# ==================== ABA 2: OS PORQUINHOS DE INVESTIMENTO ====================
+# ==================== ABA 2: OS PORQUINHOS ====================
 with aba_porquinhos:
     st.title("🐷 Os Meus Porquinhos Dinâmicos")
     st.caption("Acompanhe o preenchimento das suas grandes metas de patrimônio.")
@@ -275,7 +279,7 @@ with aba_porquinhos:
     
     # PORQUINHO 1
     if alvo_fundo_1 > 0 and nome_fundo_1:
-        st.subheader(f"🧱 Alvo: {nome_fundo_1}")
+        st.subheader(f"{nome_fundo_1}")
         falta_fundo_1 = max(alvo_fundo_1 - acumulado_porquinho_1, 0.0)
         
         c1, c2, c3 = st.columns(3)
@@ -285,12 +289,12 @@ with aba_porquinhos:
         
         perc_1 = min(acumulado_porquinho_1 / alvo_fundo_1, 1.0)
         st.progress(perc_1)
-        st.markdown(f"**Porquinho preenchido:** {perc_1 * 100:.1f}%")
+        st.markdown(f"**Progresso:** {perc_1 * 100:.1f}%")
         st.markdown("---")
         
     # PORQUINHO 2
     if alvo_fundo_2 > 0 and nome_fundo_2:
-        st.subheader(f"🚗 Alvo: {nome_fundo_2}")
+        st.subheader(f"{nome_fundo_2}")
         falta_fundo_2 = max(alvo_fundo_2 - acumulado_porquinho_2, 0.0)
         
         m1, m2, m3 = st.columns(3)
@@ -300,4 +304,4 @@ with aba_porquinhos:
         
         perc_2 = min(acumulado_porquinho_2 / alvo_fundo_2, 1.0)
         st.progress(perc_2)
-        st.markdown(f"**Porquinho preenchido:** {perc_2 * 100:.1f}%")
+        st.markdown(f"**Progresso:** {perc_2 * 100:.1f}%")
