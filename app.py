@@ -119,7 +119,6 @@ mes_selected_num = st.sidebar.selectbox(
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
 # --- PROCESSAMENTO LÓGICO ---
-# Os limites teóricos são baseados na renda informada na sidebar
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE_MENSAL = RENDA_BASE * 0.20           
@@ -153,7 +152,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. Varredura Global (para metas permanentes e histórico de dívidas)
+            # 1. Varredura Global
             for item in res_data:
                 grupo = item.get("grupo_orcamentario") or ""
                 subcat = item.get("subcategoria") or ""
@@ -176,31 +175,29 @@ if supabase:
                 if "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
-            # 2. FILTRAGEM TEMPORAL CRÍTICA CORRIGIDA
+            # 2. Filtragem Temporal Sem Erros
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
             
-            # Filtro base por Ano e Mês selecionados
             df_filtrado = df_filtrado[(df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num)]
             
-            # Sub-filtros baseados na Janela de Tempo selecionada pelo usuário
             if janela_tempo == "Últimos 7 Dias":
                 inicio_intervalo = hoje - datetime.timedelta(days=7)
                 df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= inicio_intervalo) & (df_filtrado["data_dt"] <= hoje)]
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
                 
-            # 3. Consolidação dos Valores do Período Filtrado
+            # 3. Consolidação Limpa
             for _, row in df_filtrado.iterrows():
                 val = float(row["valor"])
                 grupo = str(row["grupo_orcamentario"] or "")
                 tipo_mov = row.get("tipo", "Gasto ou Investimento (Saída)")
                 
-                if "📅 AGENDA: CONTAS A PAGAR" in group_name := grupo:
+                if "📅 AGENDA: CONTAS A PAGAR" in grupo:
                     agenda_a_pagar_mes += val
                     continue
-                elif "📅 AGENDA: CONTAS A RECEBER" in group_name:
+                elif "📅 AGENDA: CONTAS A RECEBER" in grupo:
                     agenda_a_receber_mes += val
                     continue
                 
@@ -213,15 +210,15 @@ if supabase:
                     gastos_reais_mes += val
                     if "50% Essencial" in grupo:
                         gastos_essencial += val
-                    elif "30% Estilo de Vida" in group_name:
-                        gastos_estilo += val
+                    elif "30% Estilo de Vida" in grupo:
+                        gastos_stilo = gastos_estilo + val # Correção de escopo para acumular estilo
+                        gastos_estilo = gastos_stilo
                     elif "20% Aporte" in grupo:
                         gastos_aporte_mes += val
                     
     except Exception as e:
         st.error(f"Erro na validação de segurança: {e}")
 
-# Execução do cálculo dinâmico real baseado no período filtrado
 receitas_totais_calculadas = RENDA_BASE + faturamento_extra_mes
 saldo_disponivel_caixa = receitas_totais_calculadas - gastos_reais_mes
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
@@ -315,12 +312,12 @@ with aba_painel:
                 df_necessidade = df_raiox_limpo.groupby("nivel_bruto")["valor"].sum().reset_index()
                 
                 mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
-                df_necessidade["Nível de Importance"] = df_necessidade["nivel_bruto"].map(mapa_nomes).fillna("🟡 2 - Útil / Desejável")
+                df_necessidade["Nível de Importância"] = df_necessidade["nivel_bruto"].map(mapa_nomes).fillna("🟡 2 - Útil / Desejável")
                 df_necessidade["Total Gasto (R$)"] = df_necessidade["valor"].astype(float)
                 
                 fig_necessidade = px.bar(
-                    df_necessidade, y="Nível de Importance", x="Total Gasto (R$)", 
-                    orientation='h', color="Nível de Importance",
+                    df_necessidade, y="Nível de Importância", x="Total Gasto (R$)", 
+                    orientation='h', color="Nível de Importância",
                     color_discrete_map={
                         "🚨 1 - Impulsivo / Evitável": "#FF4B4B", 
                         "🟡 2 - Útil / Desejável": "#FFD700", 
@@ -350,7 +347,7 @@ with aba_painel:
         val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=500.0)
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
-        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
+        valor = st.number_input("Qual o valor da operation? (R$)", min_value=0.0, step=5.0, format="%.2f")
         if criando_novo_porquinho:
             tipo = st.radio("Direção configurada automaticamente:", ["Faturamento ou Receita (Entrada)"])
         else:
@@ -500,7 +497,7 @@ with aba_agenda:
     st.subheader("📋 Seus Compromissos Mapeados no Período")
     
     if not df_filtrado.empty:
-        df_agenda_filtrada = df_todos_dados.copy() # Mantém escopo geral do mês para agendas se preferir
+        df_agenda_filtrada = df_todos_dados.copy()
         df_agenda_filtrada["grupo_orcamentario"] = df_agenda_filtrada["grupo_orcamentario"].fillna("").astype(str)
         df_agenda_filtrada = df_agenda_filtrada[df_agenda_filtrada["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)]
         
