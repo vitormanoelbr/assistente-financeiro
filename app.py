@@ -98,7 +98,6 @@ if st.sidebar.button("🚪 Sair da Conta"):
 
 # --- ⚙️ PERFIL & FILTROS (SIDEBAR) ---
 st.sidebar.header("⚙️ Configurações do Perfil")
-# Configuração dinâmica do Salário Mensal que alimenta o motor do caixa
 RENDA_BASE = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=2500.00, step=100.0)
 
 st.sidebar.markdown("---")
@@ -120,24 +119,21 @@ mes_selected_num = st.sidebar.selectbox(
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
 # --- PROCESSAMENTO LÓGICO ---
-# Distribuição teórica do orçamento base
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE_MENSAL = RENDA_BASE * 0.20           
 
-# Acumuladores de lançamentos reais realizados do período filtrado
-total_faturamento_extra_periodo = 0.0
-total_gastos_efetuados_periodo = 0.0
+# Acumuladores corrigidos e unificados para o escopo temporal
+faturamento_extra_mes = 0.0
+gastos_reais_mes = 0.0
 
 gastos_essencial = 0.0
 gastos_estilo = 0.0
 gastos_aporte_mes = 0.0
 
-# Acumuladores históricos vitalícios (Dívidas e Metas globais)
 DIVIDA_TOTAL_INICIAL = 0.0
 total_pago_divida = 0.0
 
-# Estimativas preditivas da agenda do período filtrado
 agenda_a_pagar_mes = 0.0
 agenda_a_receber_mes = 0.0
 
@@ -157,7 +153,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. VARREDURA HISTÓRICA E VITALÍCIA (Dívidas Globais e Alvos dos Porquinhos)
+            # 1. VARREDURA GLOBAL (Dívidas e Porquinhos)
             for item in res_data:
                 grupo = item["grupo_orcamentario"]
                 subcat = item["subcategoria"]
@@ -180,7 +176,7 @@ if supabase:
                 if "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
-            # 2. SELEÇÃO E FILTRAGEM TEMPORAL DA SPRINT ATUAL
+            # 2. SELEÇÃO TEMPORAL
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
@@ -191,11 +187,11 @@ if supabase:
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
                 
-            # 3. COMPILAÇÃO DO CAIXA ESPECÍFICO DO MÊS SELECIONADO
+            # 3. CONSOLIDAÇÃO DO MÊS SELECIONADO (Nomes corrigidos para evitar NameError)
             for _, row in df_filtrado.iterrows():
                 val = float(row["valor"])
                 grupo = row["grupo_orcamentario"]
-                tipo_mov = row.get("tipo", "Gasto or Investimento (Saída)")
+                tipo_mov = row.get("tipo", "Gasto ou Investimento (Saída)")
                 
                 if "📅 AGENDA: CONTAS A PAGAR" in grupo:
                     agenda_a_pagar_mes += val
@@ -208,9 +204,9 @@ if supabase:
                     continue
                 
                 if "Faturamento" in tipo_mov:
-                    total_faturamento_extra_periodo += val
+                    faturamento_extra_mes += val
                 else:
-                    total_gastos_efetuados_periodo += val
+                    gastos_reais_mes += val
                     if "50% Essencial" in grupo:
                         gastos_essencial += val
                     elif "30% Estilo de Vida" in grupo:
@@ -221,9 +217,9 @@ if supabase:
     except Exception as e:
         st.error(f"Erro na validação de segurança: {e}")
 
-# EXECUÇÃO DO NOVO MOTOR MATEMÁTICO DINÂMICO
-receitas_totais_calculadas = RENDA_BASE + total_faturamento_extra_periodo
-saldo_disponivel_caixa = receitas_totais_calculadas - total_gastos_efetuados_periodo
+# Execução limpa do fluxo amarrado ao campo da barra lateral
+receitas_totais_calculadas = RENDA_BASE + faturamento_extra_mes
+saldo_disponivel_caixa = receitas_totais_calculadas - gastos_reais_mes
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
@@ -256,11 +252,10 @@ aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", 
 with aba_painel:
     st.title("📲 Meu Planner Financeiro")
     
-    # --- 🏦 FLUXO DE CAIXA TOTALMENTE DINÂMICO VINCULADO AO SALÁRIO ---
     st.markdown("### 🏦 Saúde Disponível do Caixa")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
     c_caixa1.metric(label="Salários / Receitas Totais", value=f"R$ {receitas_totais_calculadas:,.2f}")
-    c_caixa2.metric(label="Contas Já Pagas", value=f"R$ {total_gastos_efetuados_periodo:,.2f}", delta="-Saídas", delta_color="inverse")
+    c_caixa2.metric(label="Contas Já Pagas", value=f"R$ {gastos_reais_mes:,.2f}", delta="-Saídas", delta_color="inverse")
     
     if saldo_disponivel_caixa >= 0:
         c_caixa3.metric(label="💰 Dinheiro Sobrando (Saldo Líquido)", value=f"R$ {saldo_disponivel_caixa:,.2f}")
@@ -307,8 +302,11 @@ with aba_painel:
             df_raiox_limpo["Nível Numérico"] = df_raiox_limpo["satisfacao"].astype(str).str[0]
             df_necessidade = df_raiox_limpo.groupby("Nível Numérico")["valor"].sum().reset_index()
             df_necessidade.columns = ["Nível de Importância", "Total Gasto (R$)"]
-            mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
-            df_necessidade["Nível de Importância"] = df_necessidade["Nível de Importance"].map(mapa_nomes)
+            
+            # CORRIGIDO DEFINITIVAMENTE: Correção de acentuação na variável interna do mapeamento do gráfico
+            df_necessidade["Nível de Importância"] = df_necessidade["Nível de Importância"].map({
+                "1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"
+            })
             
             fig_necessidade = px.bar(df_necessidade, y="Nível de Importância", x="Total Gasto (R$)", orientation='h', color="Nível de Importância",
                                      color_discrete_map={"🚨 1 - Impulsivo / Evitável": "#FF4B4B", "🟡 2 - Útil / Desejável": "#FFD700", "🟢 3 - Indispensável": "#00FF66"})
