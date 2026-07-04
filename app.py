@@ -101,7 +101,7 @@ if st.sidebar.button("🚪 Sair da Conta"):
 
 # --- ⚙️ PERFIL & FILTROS (SIDEBAR) ---
 st.sidebar.header("⚙️ Configurações do Perfil")
-RENDA_BASE = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=2500.00, step=100.0)
+RENDA_BASE = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=2500.00, step=50.0, format="%.2f")
 
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Filtros de Tempo")
@@ -215,11 +215,10 @@ if supabase:
                         gastos_essencial += val
                     elif "30% Estilo de Vida" in grupo:
                         gastos_estilo += val
-                    elif "20% Aporte" in grupo:
+                    elif "20% Aporte" in group or "20% Aporte" in grupo:
                         gastos_aporte_mes += val
                     
     except Exception as e:
-        # Se a sessão expirou (JWT expired), redireciona direto para limpar os parâmetros e pedir login limpo
         if "JWT expired" in str(e) or "PGRST303" in str(e):
             st.error("🔒 Sua sessão expirou por segurança. Faça login novamente.")
             deslogar_usuario()
@@ -268,7 +267,7 @@ with aba_painel:
     c_caixa2.metric(label="Saldo Atual em Caixa", value=f"R$ {saldo_disponivel_caixa:,.2f}")
     
     if saldo_livre_puro >= 0:
-        c_caixa3.metric(label="💰 Dinheiro de Bolso (Livre Real)", value=f"R$ {saldo_livre_puro:,.2f}", help="Valor descontando as fatias do 50/30/20.")
+        c_caixa3.metric(label="💰 Dinheiro de Bolso (Livre Real)", value=f"R$ {saldo_livre_puro:,.2f}", help="Valor descontando as travas planejadas do método 50/30/20.")
     else:
         c_caixa3.metric(label="🚨 Alerta Orçamentário", value=f"R$ {saldo_livre_puro:,.2f}", delta="Abaixo do Planejado!")
 
@@ -302,7 +301,7 @@ with aba_painel:
     st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
-    # --- 🛡️ MOTOR DO GRÁFICO TOTALMENTE BLINDADO ---
+    # --- 🛡️ MOTOR DO GRÁFICO OTIMIZADO ---
     try:
         df_Seguro = df_filtrado.copy() if not df_filtrado.empty else pd.DataFrame(columns=["grupo_orcamentario", "descricao", "satisfacao", "valor"])
         df_Seguro["grupo_orcamentario"] = df_Seguro["grupo_orcamentario"].fillna("").astype(str)
@@ -335,12 +334,8 @@ with aba_painel:
             fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_necessidade, use_container_width=True)
         else:
-            df_mock = pd.DataFrame({
-                "Nível de Importância": ["🚨 1 - Impulsivo / Evitável", "🟡 2 - Útil / Desejável", "🟢 3 - Indispensável"],
-                "Total Gasto (R$)": [0.0, LIMITE_ESTILO_DE_VIDA, LIMITE_ESSENCIAL]
-            })
-            fig_mock = px.bar(df_mock, y="Nível de Importância", x="Total Gasto (R$)", orientation='h', opacity=0.3, title="Projeção Inicial Teórica (Nenhum gasto feito)")
-            st.plotly_chart(fig_mock, use_container_width=True)
+            # INTERFACE LIMPA: Removeu-se o gráfico mock redundante para evitar poluição visual desnecessária na UI
+            st.info("💡 Nenhum gasto real efetuado neste período para gerar a análise comportamental.")
     except Exception as erro_grafico:
         st.warning(f"📊 O painel gráfico está sendo recalculado. Detalhe técnico: {erro_grafico}")
 
@@ -357,10 +352,11 @@ with aba_painel:
     if criando_novo_porquinho:
         col_n1, col_n2 = st.columns(2)
         nome_novo_fundo = col_n1.text_input("Nome e Emoji da Nova Meta:", placeholder="Ex: ✈️ Férias")
-        val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=500.0)
+        val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=50.0, format="%.2f")
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
-        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
+        # CORREÇÃO: Passo mudado para 0.01 para permitir digitação exata de moedas e centavos
+        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=0.01, format="%.2f")
         if criando_novo_porquinho:
             tipo = st.radio("Direção configurada automaticamente:", ["Faturamento ou Receita (Entrada)"])
         else:
@@ -390,7 +386,7 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # --- 📋 GERENCIADOR DE LANÇAMENTOS SEGURO (CORRIGIDO) ---
+    # --- 📋 GERENCIADOR DE LANÇAMENTOS SEGURO ---
     st.markdown("---")
     st.subheader(f"📋 Gerenciar Lançamentos do Período ({janela_tempo})")
     
@@ -404,14 +400,13 @@ with aba_painel:
             df_editor = df_editor_limpo[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
             df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Tipo"]
             
-            # LINHA CORRIGIDA: Removida a atribuição duplicada inválida que causava o travamento
             dados_editados = st.data_editor(df_editor, use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic")
             
             if st.button("💾 Salvar Alterações da Tabela"):
                 try:
                     linhas_atuais_ids = set(dados_editados["ID"].tolist())
                     linhas_originais_ids = set(df_editor["ID"].tolist())
-                    ids_deletados = linhas_originais_ids - linhas_atuais_ids
+                    ids_deletados = Boston_ids := linhas_originais_ids - linhas_atuais_ids
                     for id_del in ids_deletados:
                         supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
                     for _, row in dados_editados.iterrows():
@@ -473,7 +468,7 @@ with aba_agenda:
         st.subheader("📌 Agendar Conta Fixa (A Pagar)")
         with st.form("form_agenda_pagar", clear_on_submit=True):
             name_boleto = st.text_input("Nome da Conta / Boleto:", placeholder="Ex: Aluguel, Luz, Internet...")
-            valor_boleto = st.number_input("Valor Estimado (R$):", min_value=0.0, step=10.0)
+            valor_boleto = st.number_input("Valor Estimado (R$):", min_value=0.0, step=0.01, format="%.2f")
             vencimento_boleto = st.date_input("Data de Vencimento:", datetime.date.today())
             botao_agenda_pagar = st.form_submit_button("Agendar Conta Fixa")
             
@@ -493,7 +488,7 @@ with aba_agenda:
         st.subheader("💰 Agendar Valor (A Receber)")
         with st.form("form_agenda_receber", clear_on_submit=True):
             nome_recebivel = st.text_input("O que tem a receber?:", placeholder="Ex: Venda da Moto...")
-            valor_recebivel = st.number_input("Valor a Receber (R$):", min_value=0.0, step=50.0)
+            valor_recebivel = st.number_input("Valor a Receber (R$):", min_value=0.0, step=0.01, format="%.2f")
             data_recebivel = st.date_input("Data de Expectativa:", datetime.date.today())
             botao_agenda_receber = st.form_submit_button("Agendar Recebimento")
             
