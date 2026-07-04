@@ -86,7 +86,7 @@ if st.session_state["usuario_logado"] is None:
 # ==================== SISTEMA PRINCIPAL ====================
 USER_ID = st.session_state["usuario_logado"]
 
-if st.sidebar.button("🚪 Sair da Conta"):
+def deslogar_usuario():
     try:
         supabase.auth.sign_out()
     except:
@@ -95,6 +95,9 @@ if st.sidebar.button("🚪 Sair da Conta"):
     st.session_state["user_token"] = None
     st.query_params.clear()
     st.rerun()
+
+if st.sidebar.button("🚪 Sair da Conta"):
+    deslogar_usuario()
 
 # --- ⚙️ PERFIL & FILTROS (SIDEBAR) ---
 st.sidebar.header("⚙️ Configurações do Perfil")
@@ -216,14 +219,17 @@ if supabase:
                         gastos_aporte_mes += val
                     
     except Exception as e:
-        st.error(f"Erro na validação de segurança: {e}")
+        # Se a sessão expirou (JWT expired), redireciona direto para limpar os parâmetros e pedir login limpo
+        if "JWT expired" in str(e) or "PGRST303" in str(e):
+            st.error("🔒 Sua sessão expirou por segurança. Faça login novamente.")
+            deslogar_usuario()
+        else:
+            st.error(f"Erro na validação de segurança: {e}")
 
-# Lógica Avançada: O saldo disponível de verdade deduz o orçamento planejado para evitar surpresas
 receitas_totais_calculadas = RENDA_BASE + faturamento_extra_mes
 saldo_disponivel_caixa = receitas_totais_calculadas - gastos_reais_mes
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
-# Dinheiro verdadeiramente livre (tirando as travas dos 50/30/20 planejados)
 saldo_livre_puro = receitas_totais_calculadas - max(gastos_essencial, LIMITE_ESSENCIAL) - max(gastos_estilo, LIMITE_ESTILO_DE_VIDA) - max(gastos_aporte_mes, META_APORTE_MENSAL)
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
@@ -262,7 +268,7 @@ with aba_painel:
     c_caixa2.metric(label="Saldo Atual em Caixa", value=f"R$ {saldo_disponivel_caixa:,.2f}")
     
     if saldo_livre_puro >= 0:
-        c_caixa3.metric(label="💰 Dinheiro de Bolso (Livre Real)", value=f"R$ {saldo_livre_puro:,.2f}", help="Valor descontando as fatias do 50/30/20 que você deve reter.")
+        c_caixa3.metric(label="💰 Dinheiro de Bolso (Livre Real)", value=f"R$ {saldo_livre_puro:,.2f}", help="Valor descontando as fatias do 50/30/20.")
     else:
         c_caixa3.metric(label="🚨 Alerta Orçamentário", value=f"R$ {saldo_livre_puro:,.2f}", delta="Abaixo do Planejado!")
 
@@ -329,7 +335,6 @@ with aba_painel:
             fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_necessidade, use_container_width=True)
         else:
-            # INTERFACE PROJETADA INTELIGENTE: Em vez de vazio, mostra um mock educacional de como deve ser a meta
             df_mock = pd.DataFrame({
                 "Nível de Importância": ["🚨 1 - Impulsivo / Evitável", "🟡 2 - Útil / Desejável", "🟢 3 - Indispensável"],
                 "Total Gasto (R$)": [0.0, LIMITE_ESTILO_DE_VIDA, LIMITE_ESSENCIAL]
@@ -385,7 +390,7 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # --- 📋 GERENCIADOR DE LANÇAMENTOS SEGURO ---
+    # --- 📋 GERENCIADOR DE LANÇAMENTOS SEGURO (CORRIGIDO) ---
     st.markdown("---")
     st.subheader(f"📋 Gerenciar Lançamentos do Período ({janela_tempo})")
     
@@ -398,7 +403,9 @@ with aba_painel:
         if not df_editor_limpo.empty:
             df_editor = df_editor_limpo[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
             df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Tipo"]
-            dados_editados = st.data_editor(dados_editados := st.data_editor(df_editor, use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic"))
+            
+            # LINHA CORRIGIDA: Removida a atribuição duplicada inválida que causava o travamento
+            dados_editados = st.data_editor(df_editor, use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic")
             
             if st.button("💾 Salvar Alterações da Tabela"):
                 try:
