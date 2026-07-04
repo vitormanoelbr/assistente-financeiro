@@ -123,7 +123,6 @@ LIMITE_ESSENCIAL = RENDA_BASE * 0.50
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE_MENSAL = RENDA_BASE * 0.20           
 
-# Variáveis do Fluxo de Caixa Dinâmico
 total_faturamento_recebido = 0.0
 total_gastos_efetuados = 0.0
 
@@ -133,6 +132,9 @@ gastos_aporte_mes = 0.0
 
 DIVIDA_TOTAL_INICIAL = 0.0
 total_pago_divida = 0.0
+
+agenda_a_pagar_mes = 0.0
+agenda_a_receber_mes = 0.0
 
 dicionario_metas_alvo = {}
 dicionario_aportes_acumulados = {}
@@ -156,11 +158,12 @@ if supabase:
                 tipo_mov = item.get("tipo", "Gasto ou Investimento (Saída)")
                 val_mov = float(item["valor"])
                 
-                # Cálculo Global do Saldo Comercial
-                if "Faturamento" in tipo_mov:
-                    total_faturamento_recebido += val_mov
-                else:
-                    total_gastos_efetuados += val_mov
+                if "📅 AGENDA" in grupo:
+                    continue
+                
+                if "🚀 20% Aporte" in grupo and "Entrada" in tipo_mov:
+                    dicionario_metas_alvo[subcat] = val_mov
+                    continue
                 
                 if "📋 Quitação de Dívidas" in grupo:
                     if "Entrada" in tipo_mov:
@@ -168,11 +171,13 @@ if supabase:
                     else:
                         total_pago_divida += val_mov
                 
-                if "🚀 20% Aporte" in grupo:
-                    if "Entrada" in tipo_mov:
-                        dicionario_metas_alvo[subcat] = val_mov
-                    else:
-                        dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
+                if "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
+                    dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
+
+                if "Faturamento" in tipo_mov:
+                    total_faturamento_recebido += val_mov
+                else:
+                    total_gastos_efetuados += val_mov
             
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
@@ -189,6 +194,16 @@ if supabase:
                 grupo = row["grupo_orcamentario"]
                 tipo_mov = row.get("tipo", "Gasto ou Investimento (Saída)")
                 
+                if "📅 AGENDA: CONTAS A PAGAR" in grupo:
+                    agenda_a_pagar_mes += val
+                    continue
+                elif "📅 AGENDA: CONTAS A RECEBER" in grupo:
+                    agenda_a_receber_mes += val
+                    continue
+                
+                if "🚀 20% Aporte" in grupo and "Entrada" in tipo_mov:
+                    continue
+                
                 if "Saída" in tipo_mov:
                     if "50% Essencial" in grupo:
                         gastos_essencial += val
@@ -200,7 +215,6 @@ if supabase:
     except Exception as e:
         st.error(f"Erro na validação de segurança: {e}")
 
-# Matemática de quanto está sobrando na conta corrente real hoje
 saldo_disponivel_caixa = total_faturamento_recebido - total_gastos_efetuados
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
@@ -228,24 +242,28 @@ MAPA_CATEGORIAS = {
     ]
 }
 
-# Adicionamos a terceira aba de Agenda Preditiva solicitada
 aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", "🐷 Meus Porquinhos", "📅 Agenda de Compromissos"])
 
-# ==================== ABA 1: PAINEL PRINCIPAL ====================
+# ==================== ABA 1 ====================
 with aba_painel:
     st.title("📲 Meu Planner Financeiro")
     
-    # --- 💵 NOVO CARD: FLUXO DE CAIXA DINÂMICO (SOLICITADO) ---
     st.markdown("### 🏦 Saúde Disponível do Caixa")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="Total Entradas Acumuladas", value=f"R$ {total_faturamento_recebido:,.2f}")
-    c_caixa2.metric(label="Total Saídas Efetuadas", value=f"R$ {total_gastos_efetuados:,.2f}", delta="-Gastos", delta_color="inverse")
+    c_caixa1.metric(label="Salários / Receitas Reais", value=f"R$ {total_faturamento_recebido:,.2f}")
+    c_caixa2.metric(label="Contas Já Pagas", value=f"R$ {total_gastos_efetuados:,.2f}", delta="-Saídas", delta_color="inverse")
     
-    # Cor do saldo muda dinamicamente se estiver no vermelho ou azul
     if saldo_disponivel_caixa >= 0:
-        c_caixa3.metric(label="💰 Quanto tá Sobrando (Saldo Real)", value=f"R$ {saldo_disponivel_caixa:,.2f}")
+        c_caixa3.metric(label="💰 Dinheiro Sobrando (Saldo Líquido)", value=f"R$ {saldo_disponivel_caixa:,.2f}")
     else:
-        c_caixa3.metric(label="🚨 Saldo em Conta (Alerta)", value=f"R$ {saldo_disponivel_caixa:,.2f}", delta="Negativo!")
+        c_caixa3.metric(label="🚨 Saldo em Conta", value=f"R$ {saldo_disponivel_caixa:,.2f}", delta="Negativo!")
+
+    if agenda_a_pagar_mes > 0 or agenda_a_receber_mes > 0:
+        st.markdown("#### 🔮 Previsões Mapeadas para o Restante do Mês")
+        c_prev1, c_prev2, c_prev3 = st.columns(3)
+        c_prev1.metric(label="A Receber Agendado", value=f"R$ {agenda_a_receber_mes:,.2f}")
+        c_prev2.metric(label="Boletos Fixos Pendentes", value=f"R$ {agenda_a_pagar_mes:,.2f}")
+        c_prev3.metric(label="Balanço Previsto", value=f"R$ {agenda_a_receber_mes - agenda_a_pagar_mes:,.2f}", delta="Cenário Futuro")
 
     st.markdown("---")
     st.subheader("📊 Painel de Limites Orçamentários")
@@ -270,22 +288,24 @@ with aba_painel:
     st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
-    # Raio-X de Necessidade Real
     if not df_filtrado.empty:
-        st.markdown("---")
-        st.subheader("🧠 Raio-X de Necessidade Real (Mês Filtrado)")
-        df_filtrado["Nível Numérico"] = df_filtrado["satisfacao"].astype(str).str[0]
-        df_necessidade = df_filtrado.groupby("Nível Numérico")["valor"].sum().reset_index()
-        df_necessidade.columns = ["Nível de Importância", "Total Gasto (R$)"]
-        mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
-        df_necessidade["Nível de Importância"] = df_necessidade["Nível de Importância"].map(mapa_nomes)
+        df_raiox_limpo = df_filtrado[~df_filtrado["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
+        df_raiox_limpo = df_raiox_limpo[~df_raiox_limpo["descricao"].str.contains("Meta Criada", na=False)]
         
-        fig_necessidade = px.bar(df_necessidade, y="Nível de Importância", x="Total Gasto (R$)", orientation='h', color="Nível de Importância",
-                                 color_discrete_map={"🚨 1 - Impulsivo / Evitável": "#FF4B4B", "🟡 2 - Útil / Desejável": "#FFD700", "🟢 3 - Indispensável": "#00FF66"})
-        fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig_necessidade, use_container_width=True)
+        if not df_raiox_limpo.empty:
+            st.markdown("---")
+            st.subheader("🧠 Raio-X de Necessidade Real (Mês Filtrado)")
+            df_raiox_limpo["Nível Numérico"] = df_raiox_limpo["satisfacao"].astype(str).str[0]
+            df_necessidade = df_raiox_limpo.groupby("Nível Numérico")["valor"].sum().reset_index()
+            df_necessidade.columns = ["Nível de Importância", "Total Gasto (R$)"]
+            mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
+            df_necessidade["Nível de Importância"] = df_necessidade["Nível de Importância"].map(mapa_nomes)
+            
+            fig_necessidade = px.bar(df_necessidade, y="Nível de Importância", x="Total Gasto (R$)", orientation='h', color="Nível de Importância",
+                                     color_discrete_map={"🚨 1 - Impulsivo / Evitável": "#FF4B4B", "🟡 2 - Útil / Desejável": "#FFD700", "🟢 3 - Indispensável": "#00FF66"})
+            fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_necessidade, use_container_width=True)
 
-    # Formulário de Envio
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação Realizada")
     grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
@@ -332,7 +352,40 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-# ==================== ABA 2: MEUS PORQUINHOS ====================
+    # --- 🛠️ CORREÇÃO ESTRUTURAL DA VISIBILIDADE DO GERENCIADOR ---
+    st.markdown("---")
+    st.subheader("📋 Gerenciar Lançamentos do Período")
+    
+    if supabase and not df_filtrado.empty:
+        df_editor_limpo = df_filtrado[~df_filtrado["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
+        
+        if not df_editor_limpo.empty:
+            df_editor = df_editor_limpo[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
+            df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Tipo"]
+            dados_editados = st.data_editor(df_editor, use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic")
+            
+            if st.button("💾 Salvar Alterações da Tabela"):
+                try:
+                    linhas_atuais_ids = set(dados_editados["ID"].tolist())
+                    linhas_originais_ids = set(df_editor["ID"].tolist())
+                    ids_deletados = linhas_originais_ids - linhas_atuais_ids
+                    for id_del in ids_deletados:
+                        supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
+                    for _, row in dados_editados.iterrows():
+                        row_id = int(row["ID"])
+                        orig_row = df_editor[df_editor["ID"] == row_id].iloc[0]
+                        if (row["Descrição"] != orig_row["Descrição"]) or (float(row["Valor (R$)"]) != float(orig_row["Valor (R$)"])) or (row["Tipo"] != orig_row["Tipo"]):
+                            supabase.table("movimentacoes").update({"descricao": row["Descrição"], "valor": float(row["Valor (R$)"]), "tipo": row["Tipo"]}).eq("id", row_id).execute()
+                    st.success("🔄 Alterações salvas com segurança!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao salvar alterações: {e}")
+        else:
+            st.info("💡 Nenhum lançamento real realizado neste mês (itens agendados ficam guardados na aba de Compromissos).")
+    else:
+        st.info("💡 Nenhum lançamento real encontrado para os filtros selecionados neste período.")
+
+# ==================== ABA 2 ====================
 with aba_porquinhos:
     st.title("🐷 Meus Porquinhos")
     st.caption("Evolução patrimonial trancada por criptografia e restrita à sua conta.")
@@ -357,13 +410,15 @@ with aba_porquinhos:
             st.markdown(f"**Preenchimento:** {(guardado / valor_alvo) * 100:.1f}%")
             st.markdown("---")
             
-        st.subheader("📈 Dashboard Compartativo de Objetivos")
+        st.subheader("📈 Dashboard Comparativo de Objetivos")
         df_porquinhos_fig = pd.DataFrame(dados_metas_grafico)
         fig_porquinhos = px.bar(df_porquinhos_fig, x="Meta", y="Valor", color="Estado", title="Raio-X de Evolução Patrimonial Combinada",
                                 color_discrete_map={"Guardado (R$)": "#00FF66", "Falta Pagar (R$)": "#444444"})
         st.plotly_chart(fig_porquinhos, use_container_width=True)
+    else:
+        st.info("💡 Você ainda não criou nenhum porquinho.")
 
-# ==================== ABA 3: AGENDA DE COMPROMISSOS (NOVA!) ====================
+# ==================== ABA 3 ====================
 with aba_agenda:
     st.title("📅 Agenda de Compromissos Financeiros")
     st.caption("Mapeie seus boletos fixos e contas que tem a receber neste mês para não esquecer nada.")
@@ -381,7 +436,6 @@ with aba_agenda:
             
             if botao_agenda_pagar and supabase and nome_boleto and valor_boleto > 0:
                 try:
-                    # Salva com uma tag especial em grupo_orcamentario para sabermos que é da agenda
                     supabase.table("movimentacoes").insert({
                         "data": str(vencimento_boleto), "valor": float(valor_boleto), "tipo": "Gasto ou Investimento (Saída)",
                         "descricao": f"[AGENDA COMPROMISSO] {nome_boleto}", "grupo_orcamentario": "📅 AGENDA: CONTAS A PAGAR",
@@ -395,7 +449,7 @@ with aba_agenda:
     with col_agenda2:
         st.subheader("💰 Agendar Valor (A Receber)")
         with st.form("form_agenda_receber", clear_on_submit=True):
-            nome_recebivel = st.text_input("O que tem a receber?:", placeholder="Ex: Empréstimo do Fulano, Venda da Moto...")
+            nome_recebivel = st.text_input("O que tem a receber?:", placeholder="Ex: Venda da Moto...")
             valor_recebivel = st.number_input("Valor a Receber (R$):", min_value=0.0, step=50.0)
             data_recebivel = st.date_input("Data de Expectativa:", datetime.date.today())
             botao_agenda_receber = st.form_submit_button("Agendar Recebimento")
@@ -412,11 +466,9 @@ with aba_agenda:
                 except Exception as e:
                     st.error(f"Erro: {e}")
 
-    # --- LISTAGEM DOS AGENDAMENTOS MENSAIS ---
     st.markdown("---")
     st.subheader("📋 Seus Compromissos Mapeados no Período")
     
-    # Filtra os dados da agenda específicos para o ano e mês selecionados na barra lateral
     if not df_filtrado.empty:
         df_agenda_filtrada = df_filtrado[df_filtrado["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
         
