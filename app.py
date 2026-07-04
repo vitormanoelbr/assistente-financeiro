@@ -119,6 +119,7 @@ mes_selected_num = st.sidebar.selectbox(
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
 # --- PROCESSAMENTO LÓGICO ---
+# Os limites teóricos são baseados na renda informada na sidebar
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE_MENSAL = RENDA_BASE * 0.20           
@@ -152,7 +153,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. Varredura Global
+            # 1. Varredura Global (para metas permanentes e histórico de dívidas)
             for item in res_data:
                 grupo = item.get("grupo_orcamentario") or ""
                 subcat = item.get("subcategoria") or ""
@@ -175,27 +176,31 @@ if supabase:
                 if "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
-            # 2. Filtragem Temporal
+            # 2. FILTRAGEM TEMPORAL CRÍTICA CORRIGIDA
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
+            
+            # Filtro base por Ano e Mês selecionados
             df_filtrado = df_filtrado[(df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num)]
             
+            # Sub-filtros baseados na Janela de Tempo selecionada pelo usuário
             if janela_tempo == "Últimos 7 Dias":
-                df_filtrado = df_filtrado[df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))]
+                inicio_intervalo = hoje - datetime.timedelta(days=7)
+                df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= inicio_intervalo) & (df_filtrado["data_dt"] <= hoje)]
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
                 
-            # 3. Consolidação Mensal
+            # 3. Consolidação dos Valores do Período Filtrado
             for _, row in df_filtrado.iterrows():
                 val = float(row["valor"])
                 grupo = str(row["grupo_orcamentario"] or "")
                 tipo_mov = row.get("tipo", "Gasto ou Investimento (Saída)")
                 
-                if "📅 AGENDA: CONTAS A PAGAR" in grupo:
+                if "📅 AGENDA: CONTAS A PAGAR" in group_name := grupo:
                     agenda_a_pagar_mes += val
                     continue
-                elif "📅 AGENDA: CONTAS A RECEBER" in grupo:
+                elif "📅 AGENDA: CONTAS A RECEBER" in group_name:
                     agenda_a_receber_mes += val
                     continue
                 
@@ -208,7 +213,7 @@ if supabase:
                     gastos_reais_mes += val
                     if "50% Essencial" in grupo:
                         gastos_essencial += val
-                    elif "30% Estilo de Vida" in grupo:
+                    elif "30% Estilo de Vida" in group_name:
                         gastos_estilo += val
                     elif "20% Aporte" in grupo:
                         gastos_aporte_mes += val
@@ -216,7 +221,7 @@ if supabase:
     except Exception as e:
         st.error(f"Erro na validação de segurança: {e}")
 
-# Execução do cálculo do saldo dinâmico real
+# Execução do cálculo dinâmico real baseado no período filtrado
 receitas_totais_calculadas = RENDA_BASE + faturamento_extra_mes
 saldo_disponivel_caixa = receitas_totais_calculadas - gastos_reais_mes
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
@@ -251,15 +256,15 @@ aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", 
 with aba_painel:
     st.title("📲 Meu Planner Financeiro")
     
-    st.markdown("### 🏦 Saúde Disponível do Caixa")
+    st.markdown(f"### 🏦 Saúde Disponível do Caixa ({janela_tempo})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="Salários / Receitas Totais", value=f"R$ {receitas_totais_calculadas:,.2f}")
-    c_caixa2.metric(label="Contas Já Pagas", value=f"R$ {gastos_reais_mes:,.2f}", delta="-Saídas", delta_color="inverse")
+    c_caixa1.metric(label="Receitas Totais no Período", value=f"R$ {receitas_totais_calculadas:,.2f}")
+    c_caixa2.metric(label="Contas Pagas no Período", value=f"R$ {gastos_reais_mes:,.2f}", delta="-Saídas", delta_color="inverse")
     
     if saldo_disponivel_caixa >= 0:
-        c_caixa3.metric(label="💰 Dinheiro Sobrando (Saldo Líquido)", value=f"R$ {saldo_disponivel_caixa:,.2f}")
+        c_caixa3.metric(label="💰 Saldo Líquido do Período", value=f"R$ {saldo_disponivel_caixa:,.2f}")
     else:
-        c_caixa3.metric(label="🚨 Saldo em Conta", value=f"R$ {saldo_disponivel_caixa:,.2f}", delta="Negativo!")
+        c_caixa3.metric(label="🚨 Saldo Negativo no Período", value=f"R$ {saldo_disponivel_caixa:,.2f}", delta="Atenção!")
 
     if agenda_a_pagar_mes > 0 or agenda_a_receber_mes > 0:
         st.markdown("#### 🔮 Previsões Mapeadas para o Restante do Mês")
@@ -291,7 +296,7 @@ with aba_painel:
     st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
-    # --- 🛡️ MOTOR DO GRÁFICO TOTALMENTE BLINDADO (CORRIGIDO) ---
+    # --- 🛡️ MOTOR DO GRÁFICO TOTALMENTE BLINDADO ---
     if not df_filtrado.empty:
         try:
             df_Seguro = df_filtrado.copy()
@@ -304,18 +309,18 @@ with aba_painel:
             
             if not df_raiox_limpo.empty:
                 st.markdown("---")
-                st.subheader("🧠 Raio-X de Necessidade Real (Mês Filtrado)")
+                st.subheader(f"🧠 Raio-X de Necessidade Real ({janela_tempo})")
                 
                 df_raiox_limpo["nivel_bruto"] = df_raiox_limpo["satisfacao"].str.strip().str[0]
                 df_necessidade = df_raiox_limpo.groupby("nivel_bruto")["valor"].sum().reset_index()
                 
                 mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
-                df_necessidade["Nível de Importância"] = df_necessidade["nivel_bruto"].map(mapa_nomes).fillna("🟡 2 - Útil / Desejável")
+                df_necessidade["Nível de Importance"] = df_necessidade["nivel_bruto"].map(mapa_nomes).fillna("🟡 2 - Útil / Desejável")
                 df_necessidade["Total Gasto (R$)"] = df_necessidade["valor"].astype(float)
                 
                 fig_necessidade = px.bar(
-                    df_necessidade, y="Nível de Importância", x="Total Gasto (R$)", 
-                    orientation='h', color="Nível de Importância",
+                    df_necessidade, y="Nível de Importance", x="Total Gasto (R$)", 
+                    orientation='h', color="Nível de Importance",
                     color_discrete_map={
                         "🚨 1 - Impulsivo / Evitável": "#FF4B4B", 
                         "🟡 2 - Útil / Desejável": "#FFD700", 
@@ -325,7 +330,7 @@ with aba_painel:
                 fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_necessidade, use_container_width=True)
             else:
-                st.info("💡 Sem dados de necessidade avaliados para gerar o Raio-X neste mês.")
+                st.info("💡 Sem dados de necessidade avaliados para gerar o Raio-X neste período.")
         except Exception as erro_grafico:
             st.warning(f"📊 O painel gráfico está sendo recalculado. Detalhe técnico: {erro_grafico}")
 
@@ -377,7 +382,7 @@ with aba_painel:
 
     # --- 📋 GERENCIADOR DE LANÇAMENTOS SEGURO ---
     st.markdown("---")
-    st.subheader("📋 Gerenciar Lançamentos do Período")
+    st.subheader(f"📋 Gerenciar Lançamentos do Período ({janela_tempo})")
     
     if supabase and not df_todos_dados.empty:
         df_editor_limpo = df_filtrado.copy()
@@ -406,7 +411,7 @@ with aba_painel:
                 except Exception as e:
                     st.error(f"Erro ao salvar alterações: {e}")
         else:
-            st.info("💡 Nenhum lançamento real realizado neste mês.")
+            st.info("💡 Nenhum lançamento real realizado neste intervalo especificado.")
     else:
         st.info("💡 Nenhum lançamento real encontrado no banco de dados.")
 
@@ -495,7 +500,7 @@ with aba_agenda:
     st.subheader("📋 Seus Compromissos Mapeados no Período")
     
     if not df_filtrado.empty:
-        df_agenda_filtrada = df_filtrado.copy()
+        df_agenda_filtrada = df_todos_dados.copy() # Mantém escopo geral do mês para agendas se preferir
         df_agenda_filtrada["grupo_orcamentario"] = df_agenda_filtrada["grupo_orcamentario"].fillna("").astype(str)
         df_agenda_filtrada = df_agenda_filtrada[df_agenda_filtrada["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)]
         
@@ -504,4 +509,4 @@ with aba_agenda:
             df_exibicao_agenda.columns = ["Vencimento/Expectativa", "Compromisso", "Valor (R$)", "Fluxo"]
             st.dataframe(df_exibicao_agenda, use_container_width=True, hide_index=True)
         else:
-            st.info("💡 Nenhum boleto ou valor a receber agendado para a competência deste mês.")
+            st.info("💡 Nenhum boleto ou valor a receber agendado encontrado.")
