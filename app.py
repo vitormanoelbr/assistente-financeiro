@@ -119,7 +119,6 @@ mes_selected_num = st.sidebar.selectbox(
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
 # --- PROCESSAMENTO LÓGICO ---
-# Limites ideais baseados na regra de bolso selecionada
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE_MENSAL = RENDA_BASE * 0.20           
@@ -153,7 +152,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. VARREDURA GLOBAL VITALÍCIA (Dívidas e Alvos)
+            # 1. Varredura Global
             for item in res_data:
                 grupo = item["grupo_orcamentario"]
                 subcat = item["subcategoria"]
@@ -176,7 +175,7 @@ if supabase:
                 if "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
-            # 2. SELEÇÃO TEMPORAL
+            # 2. Filtragem Temporal
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
@@ -187,7 +186,7 @@ if supabase:
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
                 
-            # 3. COMPILAÇÃO DO MÊS SELECIONADO
+            # 3. Consolidação Mensal
             for _, row in df_filtrado.iterrows():
                 val = float(row["valor"])
                 grupo = row["grupo_orcamentario"]
@@ -217,7 +216,6 @@ if supabase:
     except Exception as e:
         st.error(f"Erro na validação de segurança: {e}")
 
-# Execução do cálculo do saldo dinâmico real
 receitas_totais_calculadas = RENDA_BASE + faturamento_extra_mes
 saldo_disponivel_caixa = receitas_totais_calculadas - gastos_reais_mes
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
@@ -292,7 +290,7 @@ with aba_painel:
     st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
-    # --- BLOCK DO GRÁFICO CORRIGIDO ---
+    # --- 📊 MOTOR DO GRÁFICO REESTRUTURADO DO ZERO ---
     if not df_filtrado.empty:
         df_raiox_limpo = df_filtrado[~df_filtrado["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
         df_raiox_limpo = df_raiox_limpo[~df_raiox_limpo["descricao"].str.contains("Meta Criada", na=False)]
@@ -300,23 +298,30 @@ with aba_painel:
         if not df_raiox_limpo.empty:
             st.markdown("---")
             st.subheader("🧠 Raio-X de Necessidade Real (Mês Filtrado)")
-            df_raiox_limpo["Nível Numérico"] = df_raiox_limpo["satisfacao"].astype(str).str[0]
-            df_necessidade = df_raiox_limpo.groupby("Nível Numérico")["valor"].sum().reset_index()
             
-            # CORREÇÃO ABSOLUTA: Ajuste de colunas e mapeamentos síncronos
-            df_necessidade.columns = ["Nível Numérico", "Total Gasto (R$)"]
-            df_necessidade["Nível de Importância"] = df_necessidade["Nível Numérico"].map({
-                "1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"
-            })
+            # Criamos a classificação de texto direto em cada linha sem agrupar antes
+            mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
+            df_raiox_limpo["Nível de Importância"] = df_raiox_limpo["satisfacao"].astype(str).str[0].map(mapa_nomes)
             
-            fig_necessidade = px.bar(df_necessidade, y="Nível de Importância", x="Total Gasto (R$)", orientation='h', color="Nível de Importância",
-                                     color_discrete_map={"🚨 1 - Impulsivo / Evitável": "#FF4B4B", "🟡 2 - Útil / Desejável": "#FFD700", "🟢 3 - Indispensável": "#00FF66"})
+            # Agrupamento direto pela coluna final de texto estruturada, matando o risco de KeyError
+            df_necessidade = df_raiox_limpo.groupby("Nível de Importância", as_index=False)["valor"].sum()
+            df_necessidade.columns = ["Nível de Importância", "Total Gasto (R$)"]
+            
+            fig_necessidade = px.bar(
+                df_necessidade, y="Nível de Importância", x="Total Gasto (R$)", 
+                orientation='h', color="Nível de Importância",
+                color_discrete_map={
+                    "🚨 1 - Impulsivo / Evitável": "#FF4B4B", 
+                    "🟡 2 - Útil / Desejável": "#FFD700", 
+                    "🟢 3 - Indispensável": "#00FF66"
+                }
+            )
             fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_necessidade, use_container_width=True)
 
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação Realizada")
-    grupo_orcamentario = st.selectbox("Destinação Strategica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
+    grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
     opcoes_subcategoria = MAPA_CATEGORIAS[grupo_orcamentario]
     categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria, key="sub_filho_main")
 
@@ -360,7 +365,7 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # --- GERENCIADOR DE LANÇAMENTOS PROTEGIDO ---
+    # --- 📋 GERENCIADOR DE LANÇAMENTOS SEGURO ---
     st.markdown("---")
     st.subheader("📋 Gerenciar Lançamentos do Período")
     
@@ -376,7 +381,7 @@ with aba_painel:
                 try:
                     linhas_atuais_ids = set(dados_editados["ID"].tolist())
                     linhas_originais_ids = set(df_editor["ID"].tolist())
-                    ids_deletados = linhas_originais_ids - linhas_atuais_ids
+                    ids_deletados = tokens_originais_ids = linhas_originais_ids - linhas_atuais_ids
                     for id_del in ids_deletados:
                         supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
                     for _, row in dados_editados.iterrows():
@@ -429,7 +434,7 @@ with aba_porquinhos:
 # ==================== ABA 3 ====================
 with aba_agenda:
     st.title("📅 Agenda de Compromissos Financeiros")
-    st.caption("Mapeie seus boletos fixos e contas que tem a receber neste mês para não esquecer nada.")
+    st.caption("Mapeie seus boletos fixos e contas que tem a receber neste mês para não engenhar surpresas.")
     st.markdown("---")
     
     col_agenda1, col_agenda2 = st.columns(2)
