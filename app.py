@@ -119,6 +119,7 @@ mes_selected_num = st.sidebar.selectbox(
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
 # --- PROCESSAMENTO LÓGICO ---
+# Limites ideais baseados na regra de bolso selecionada
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE_MENSAL = RENDA_BASE * 0.20           
@@ -152,7 +153,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. Varredura Global
+            # 1. VARREDURA GLOBAL VITALÍCIA (Dívidas e Alvos)
             for item in res_data:
                 grupo = item["grupo_orcamentario"]
                 subcat = item["subcategoria"]
@@ -175,7 +176,7 @@ if supabase:
                 if "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
-            # 2. Filtragem de Tempo
+            # 2. SELEÇÃO TEMPORAL
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
@@ -186,7 +187,7 @@ if supabase:
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
                 
-            # 3. Consolidação Mensal
+            # 3. COMPILAÇÃO DO MÊS SELECIONADO
             for _, row in df_filtrado.iterrows():
                 val = float(row["valor"])
                 grupo = row["grupo_orcamentario"]
@@ -214,9 +215,9 @@ if supabase:
                         gastos_aporte_mes += val
                     
     except Exception as e:
-        st.error(f"Erro na validação estrutural: {e}")
+        st.error(f"Erro na validação de segurança: {e}")
 
-# Execução limpa do saldo amarrado à barra lateral
+# Execução do cálculo do saldo dinâmico real
 receitas_totais_calculadas = RENDA_BASE + faturamento_extra_mes
 saldo_disponivel_caixa = receitas_totais_calculadas - gastos_reais_mes
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
@@ -288,9 +289,10 @@ with aba_painel:
     st.progress(min(gastos_essencial / LIMITE_ESSENCIAL, 1.0) if LIMITE_ESSENCIAL > 0 else 0.0)
     st.write(f"🟡 **Estilo de Vida:** R$ {gastos_estilo:,.2f} de R$ {LIMITE_ESTILO_DE_VIDA:,.2f}")
     st.progress(min(gastos_estilo / LIMITE_ESTILO_DE_VIDA, 1.0) if LIMITE_ESTILO_DE_VIDA > 0 else 0.0)
-    st.write(f"🚀 **Aporte Mobilizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
+    st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
+    # --- BLOCK DO GRÁFICO CORRIGIDO ---
     if not df_filtrado.empty:
         df_raiox_limpo = df_filtrado[~df_filtrado["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
         df_raiox_limpo = df_raiox_limpo[~df_raiox_limpo["descricao"].str.contains("Meta Criada", na=False)]
@@ -300,10 +302,10 @@ with aba_painel:
             st.subheader("🧠 Raio-X de Necessidade Real (Mês Filtrado)")
             df_raiox_limpo["Nível Numérico"] = df_raiox_limpo["satisfacao"].astype(str).str[0]
             df_necessidade = df_raiox_limpo.groupby("Nível Numérico")["valor"].sum().reset_index()
-            df_necessidade.columns = ["Nível de Importância", "Total Gasto (R$)"]
             
-            # CORRIGIDO: Vinculação de colunas blindada sem KeyError
-            df_necessidade["Nível de Importância"] = df_necessidade["Nível de Importância"].map({
+            # CORREÇÃO ABSOLUTA: Ajuste de colunas e mapeamentos síncronos
+            df_necessidade.columns = ["Nível Numérico", "Total Gasto (R$)"]
+            df_necessidade["Nível de Importância"] = df_necessidade["Nível Numérico"].map({
                 "1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"
             })
             
@@ -314,7 +316,7 @@ with aba_painel:
 
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação Realizada")
-    grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
+    grupo_orcamentario = st.selectbox("Destinação Strategica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_pai_main")
     opcoes_subcategoria = MAPA_CATEGORIAS[grupo_orcamentario]
     categoria = st.selectbox("Subcategoria Correspondente:", opcoes_subcategoria, key="sub_filho_main")
 
@@ -363,7 +365,6 @@ with aba_painel:
     st.subheader("📋 Gerenciar Lançamentos do Período")
     
     if supabase and not df_todos_dados.empty:
-        # Pega os dados filtrados por tempo, excluindo os itens de agenda
         df_editor_limpo = df_filtrado[~df_filtrado["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
         
         if not df_editor_limpo.empty:
