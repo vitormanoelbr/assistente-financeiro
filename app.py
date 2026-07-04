@@ -466,15 +466,27 @@ with aba_agenda:
     if supabase and not df_todos_dados.empty:
         df_agenda_pura = df_todos_dados[df_todos_dados["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
         if not df_agenda_pura.empty:
+            # Ordena por data para ficar intuitivo
+            df_agenda_pura = df_agenda_pura.sort_values(by="data")
+            
             for idx, row in df_agenda_pura.iterrows():
                 id_item = int(row["id"])
                 desc_pura = str(row["descricao"]).replace("[AGENDA COMPROMISSO] ", "")
                 valor_item = float(row["valor"])
-                col_c1, col_c2, col_c3 = st.columns([3, 1, 1])
+                
+                # Grade simétrica de colunas para alinhar perfeitamente os botões da lista
+                col_c1, col_c2, col_c3 = st.columns([4, 2, 1])
                 col_c1.write(f"📅 **{row['data']}** - {desc_pura} | **R$ {valor_item:,.2f}**")
+                
                 if "CONTAS A PAGAR" in str(row["grupo_orcamentario"]):
-                    col_c2.caption("A Pagar")
+                    col_c2.caption("🔴 A Pagar")
                     if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
                         supabase.table("movimentacoes").delete().eq("id", id_item).execute()
                         supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
+                        st.rerun()
+                else:
+                    col_c2.caption("🟢 A Receber")
+                    if col_c3.button("💰 Receber", key=f"rec_{id_item}"):
+                        supabase.table("movimentacoes").delete().eq("id", id_item).execute()
+                        supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "Faturamento ou Receita (Entrada)", "descricao": f"{desc_pura} (Recebido)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
                         st.rerun()
