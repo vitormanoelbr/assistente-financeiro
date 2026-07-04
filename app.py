@@ -152,7 +152,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. Varredura Global
+            # 1. Varredura Global (Metas permanentes e histórico acumulado de dívidas)
             for item in res_data:
                 grupo = item.get("grupo_orcamentario") or ""
                 subcat = item.get("subcategoria") or ""
@@ -175,7 +175,7 @@ if supabase:
                 if "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
-            # 2. Filtragem Temporal Sem Erros
+            # 2. Filtragem Temporal Consistente
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
@@ -188,7 +188,7 @@ if supabase:
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
                 
-            # 3. Consolidação Limpa
+            # 3. Consolidação Sem Erros de Digitação
             for _, row in df_filtrado.iterrows():
                 val = float(row["valor"])
                 grupo = str(row["grupo_orcamentario"] or "")
@@ -211,8 +211,7 @@ if supabase:
                     if "50% Essencial" in grupo:
                         gastos_essencial += val
                     elif "30% Estilo de Vida" in grupo:
-                        gastos_stilo = gastos_estilo + val # Correção de escopo para acumular estilo
-                        gastos_estilo = gastos_stilo
+                        gastos_estilo += val  # Corrigido aqui de forma limpa e direta
                     elif "20% Aporte" in grupo:
                         gastos_aporte_mes += val
                     
@@ -240,7 +239,7 @@ MAPA_CATEGORIAS = {
     ],
     "🚀 20% Aporte para a Liberdade (Investimentos e Futuro)": lista_porquinhos_existentes + ["➕ [Criar Nova Meta / Porquinho]"],
     "📋 Quitação de Dívidas (Amortizações e Acordos)": [
-        "Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens", "Dívidas Pessoais / Terceiros"
+        "Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens", "Dívidas P pessoais / Terceiros"
     ],
     "💼 Custos de Negócio (Projetos e Clínica)": [
         "Ferramentas SaaS & Softwares", "Marketing & Anúncios", "Infraestrutura & Custos Operacionais"
@@ -347,7 +346,7 @@ with aba_painel:
         val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=500.0)
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
-        valor = st.number_input("Qual o valor da operation? (R$)", min_value=0.0, step=5.0, format="%.2f")
+        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=5.0, format="%.2f")
         if criando_novo_porquinho:
             tipo = st.radio("Direção configurada automaticamente:", ["Faturamento ou Receita (Entrada)"])
         else:
@@ -456,16 +455,16 @@ with aba_agenda:
     with col_agenda1:
         st.subheader("📌 Agendar Conta Fixa (A Pagar)")
         with st.form("form_agenda_pagar", clear_on_submit=True):
-            nome_boleto = st.text_input("Nome da Conta / Boleto:", placeholder="Ex: Aluguel, Luz, Internet...")
+            name_boleto = st.text_input("Nome da Conta / Boleto:", placeholder="Ex: Aluguel, Luz, Internet...")
             valor_boleto = st.number_input("Valor Estimado (R$):", min_value=0.0, step=10.0)
             vencimento_boleto = st.date_input("Data de Vencimento:", datetime.date.today())
             botao_agenda_pagar = st.form_submit_button("Agendar Conta Fixa")
             
-            if botao_agenda_pagar and supabase and nome_boleto and valor_boleto > 0:
+            if botao_agenda_pagar and supabase and name_boleto and valor_boleto > 0:
                 try:
                     supabase.table("movimentacoes").insert({
                         "data": str(vencimento_boleto), "valor": float(valor_boleto), "tipo": "Gasto ou Investimento (Saída)",
-                        "descricao": f"[AGENDA COMPROMISSO] {nome_boleto}", "grupo_orcamentario": "📅 AGENDA: CONTAS A PAGAR",
+                        "descricao": f"[AGENDA COMPROMISSO] {name_boleto}", "grupo_orcamentario": "📅 AGENDA: CONTAS A PAGAR",
                         "subcategoria": "Conta Fixa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
                     }).execute()
                     st.success("📝 Boleto agendado com sucesso!")
@@ -496,8 +495,9 @@ with aba_agenda:
     st.markdown("---")
     st.subheader("📋 Seus Compromissos Mapeados no Período")
     
+    # Ajuste intelectual: Filtra os compromissos da agenda usando o df_filtrado para respeitar o mês/ano selecionado
     if not df_filtrado.empty:
-        df_agenda_filtrada = df_todos_dados.copy()
+        df_agenda_filtrada = df_filtrado.copy()
         df_agenda_filtrada["grupo_orcamentario"] = df_agenda_filtrada["grupo_orcamentario"].fillna("").astype(str)
         df_agenda_filtrada = df_agenda_filtrada[df_agenda_filtrada["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)]
         
@@ -506,4 +506,4 @@ with aba_agenda:
             df_exibicao_agenda.columns = ["Vencimento/Expectativa", "Compromisso", "Valor (R$)", "Fluxo"]
             st.dataframe(df_exibicao_agenda, use_container_width=True, hide_index=True)
         else:
-            st.info("💡 Nenhum boleto ou valor a receber agendado encontrado.")
+            st.info("💡 Nenhum boleto ou valor a receber agendado para o período selecionado.")
