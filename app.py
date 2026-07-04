@@ -152,7 +152,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. Varredura Global (Metas permanentes e histórico acumulado de dívidas)
+            # 1. Varredura Global
             for item in res_data:
                 grupo = item.get("grupo_orcamentario") or ""
                 subcat = item.get("subcategoria") or ""
@@ -175,7 +175,7 @@ if supabase:
                 if "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
-            # 2. Filtragem Temporal Consistente
+            # 2. Filtragem Temporal
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
@@ -188,7 +188,7 @@ if supabase:
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
                 
-            # 3. Consolidação Sem Erros de Digitação
+            # 3. Consolidação Mensal
             for _, row in df_filtrado.iterrows():
                 val = float(row["valor"])
                 grupo = str(row["grupo_orcamentario"] or "")
@@ -211,16 +211,20 @@ if supabase:
                     if "50% Essencial" in grupo:
                         gastos_essencial += val
                     elif "30% Estilo de Vida" in grupo:
-                        gastos_estilo += val  # Corrigido aqui de forma limpa e direta
+                        gastos_estilo += val
                     elif "20% Aporte" in grupo:
                         gastos_aporte_mes += val
                     
     except Exception as e:
         st.error(f"Erro na validação de segurança: {e}")
 
+# Lógica Avançada: O saldo disponível de verdade deduz o orçamento planejado para evitar surpresas
 receitas_totais_calculadas = RENDA_BASE + faturamento_extra_mes
 saldo_disponivel_caixa = receitas_totais_calculadas - gastos_reais_mes
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
+
+# Dinheiro verdadeiramente livre (tirando as travas dos 50/30/20 planejados)
+saldo_livre_puro = receitas_totais_calculadas - max(gastos_essencial, LIMITE_ESSENCIAL) - max(gastos_estilo, LIMITE_ESTILO_DE_VIDA) - max(gastos_aporte_mes, META_APORTE_MENSAL)
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
 if not lista_porquinhos_existentes:
@@ -239,7 +243,7 @@ MAPA_CATEGORIAS = {
     ],
     "🚀 20% Aporte para a Liberdade (Investimentos e Futuro)": lista_porquinhos_existentes + ["➕ [Criar Nova Meta / Porquinho]"],
     "📋 Quitação de Dívidas (Amortizações e Acordos)": [
-        "Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens", "Dívidas P pessoais / Terceiros"
+        "Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens", "Dívidas Pessoais / Terceiros"
     ],
     "💼 Custos de Negócio (Projetos e Clínica)": [
         "Ferramentas SaaS & Softwares", "Marketing & Anúncios", "Infraestrutura & Custos Operacionais"
@@ -254,13 +258,13 @@ with aba_painel:
     
     st.markdown(f"### 🏦 Saúde Disponível do Caixa ({janela_tempo})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="Receitas Totais no Período", value=f"R$ {receitas_totais_calculadas:,.2f}")
-    c_caixa2.metric(label="Contas Pagas no Período", value=f"R$ {gastos_reais_mes:,.2f}", delta="-Saídas", delta_color="inverse")
+    c_caixa1.metric(label="Receitas Totais Reais", value=f"R$ {receitas_totais_calculadas:,.2f}")
+    c_caixa2.metric(label="Saldo Atual em Caixa", value=f"R$ {saldo_disponivel_caixa:,.2f}")
     
-    if saldo_disponivel_caixa >= 0:
-        c_caixa3.metric(label="💰 Saldo Líquido do Período", value=f"R$ {saldo_disponivel_caixa:,.2f}")
+    if saldo_livre_puro >= 0:
+        c_caixa3.metric(label="💰 Dinheiro de Bolso (Livre Real)", value=f"R$ {saldo_livre_puro:,.2f}", help="Valor descontando as fatias do 50/30/20 que você deve reter.")
     else:
-        c_caixa3.metric(label="🚨 Saldo Negativo no Período", value=f"R$ {saldo_disponivel_caixa:,.2f}", delta="Atenção!")
+        c_caixa3.metric(label="🚨 Alerta Orçamentário", value=f"R$ {saldo_livre_puro:,.2f}", delta="Abaixo do Planejado!")
 
     if agenda_a_pagar_mes > 0 or agenda_a_receber_mes > 0:
         st.markdown("#### 🔮 Previsões Mapeadas para o Restante do Mês")
@@ -293,42 +297,47 @@ with aba_painel:
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
     # --- 🛡️ MOTOR DO GRÁFICO TOTALMENTE BLINDADO ---
-    if not df_filtrado.empty:
-        try:
-            df_Seguro = df_filtrado.copy()
-            df_Seguro["grupo_orcamentario"] = df_Seguro["grupo_orcamentario"].fillna("").astype(str)
-            df_Seguro["descricao"] = df_Seguro["descricao"].fillna("").astype(str)
-            df_Seguro["satisfacao"] = df_Seguro["satisfacao"].fillna("2 - Útil / Desejável").astype(str)
+    try:
+        df_Seguro = df_filtrado.copy() if not df_filtrado.empty else pd.DataFrame(columns=["grupo_orcamentario", "descricao", "satisfacao", "valor"])
+        df_Seguro["grupo_orcamentario"] = df_Seguro["grupo_orcamentario"].fillna("").astype(str)
+        df_Seguro["descricao"] = df_Seguro["descricao"].fillna("").astype(str)
+        df_Seguro["satisfacao"] = df_Seguro["satisfacao"].fillna("2 - Útil / Desejável").astype(str)
+        
+        df_raiox_limpo = df_Seguro[~df_Seguro["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
+        df_raiox_limpo = df_raiox_limpo[~df_raiox_limpo["descricao"].str.contains("Meta Criada", na=False)]
+        
+        st.markdown("---")
+        st.subheader(f"🧠 Raio-X de Necessidade Real ({janela_tempo})")
+        
+        if not df_raiox_limpo.empty:
+            df_raiox_limpo["nivel_bruto"] = df_raiox_limpo["satisfacao"].str.strip().str[0]
+            df_necessidade = df_raiox_limpo.groupby("nivel_bruto")["valor"].sum().reset_index()
             
-            df_raiox_limpo = df_Seguro[~df_Seguro["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
-            df_raiox_limpo = df_raiox_limpo[~df_raiox_limpo["descricao"].str.contains("Meta Criada", na=False)]
+            mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
+            df_necessidade["Nível de Importância"] = df_necessidade["nivel_bruto"].map(mapa_nomes).fillna("🟡 2 - Útil / Desejável")
+            df_necessidade["Total Gasto (R$)"] = df_necessidade["valor"].astype(float)
             
-            if not df_raiox_limpo.empty:
-                st.markdown("---")
-                st.subheader(f"🧠 Raio-X de Necessidade Real ({janela_tempo})")
-                
-                df_raiox_limpo["nivel_bruto"] = df_raiox_limpo["satisfacao"].str.strip().str[0]
-                df_necessidade = df_raiox_limpo.groupby("nivel_bruto")["valor"].sum().reset_index()
-                
-                mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
-                df_necessidade["Nível de Importância"] = df_necessidade["nivel_bruto"].map(mapa_nomes).fillna("🟡 2 - Útil / Desejável")
-                df_necessidade["Total Gasto (R$)"] = df_necessidade["valor"].astype(float)
-                
-                fig_necessidade = px.bar(
-                    df_necessidade, y="Nível de Importância", x="Total Gasto (R$)", 
-                    orientation='h', color="Nível de Importância",
-                    color_discrete_map={
-                        "🚨 1 - Impulsivo / Evitável": "#FF4B4B", 
-                        "🟡 2 - Útil / Desejável": "#FFD700", 
-                        "🟢 3 - Indispensável": "#00FF66"
-                    }
-                )
-                fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
-                st.plotly_chart(fig_necessidade, use_container_width=True)
-            else:
-                st.info("💡 Sem dados de necessidade avaliados para gerar o Raio-X neste período.")
-        except Exception as erro_grafico:
-            st.warning(f"📊 O painel gráfico está sendo recalculado. Detalhe técnico: {erro_grafico}")
+            fig_necessidade = px.bar(
+                df_necessidade, y="Nível de Importância", x="Total Gasto (R$)", 
+                orientation='h', color="Nível de Importância",
+                color_discrete_map={
+                    "🚨 1 - Impulsivo / Evitável": "#FF4B4B", 
+                    "🟡 2 - Útil / Desejável": "#FFD700", 
+                    "🟢 3 - Indispensável": "#00FF66"
+                }
+            )
+            fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_necessidade, use_container_width=True)
+        else:
+            # INTERFACE PROJETADA INTELIGENTE: Em vez de vazio, mostra um mock educacional de como deve ser a meta
+            df_mock = pd.DataFrame({
+                "Nível de Importância": ["🚨 1 - Impulsivo / Evitável", "🟡 2 - Útil / Desejável", "🟢 3 - Indispensável"],
+                "Total Gasto (R$)": [0.0, LIMITE_ESTILO_DE_VIDA, LIMITE_ESSENCIAL]
+            })
+            fig_mock = px.bar(df_mock, y="Nível de Importância", x="Total Gasto (R$)", orientation='h', opacity=0.3, title="Projeção Inicial Teórica (Nenhum gasto feito)")
+            st.plotly_chart(fig_mock, use_container_width=True)
+    except Exception as erro_grafico:
+        st.warning(f"📊 O painel gráfico está sendo recalculado. Detalhe técnico: {erro_grafico}")
 
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação Realizada")
@@ -381,14 +390,15 @@ with aba_painel:
     st.subheader(f"📋 Gerenciar Lançamentos do Período ({janela_tempo})")
     
     if supabase and not df_todos_dados.empty:
-        df_editor_limpo = df_filtrado.copy()
-        df_editor_limpo["grupo_orcamentario"] = df_editor_limpo["grupo_orcamentario"].fillna("").astype(str)
-        df_editor_limpo = df_editor_limpo[~df_editor_limpo["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)]
+        df_editor_limpo = df_filtrado.copy() if not df_filtrado.empty else pd.DataFrame()
+        if not df_editor_limpo.empty:
+            df_editor_limpo["grupo_orcamentario"] = df_editor_limpo["grupo_orcamentario"].fillna("").astype(str)
+            df_editor_limpo = df_editor_limpo[~df_editor_limpo["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)]
         
         if not df_editor_limpo.empty:
             df_editor = df_editor_limpo[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
             df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Tipo"]
-            dados_editados = st.data_editor(df_editor, use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic")
+            dados_editados = st.data_editor(dados_editados := st.data_editor(df_editor, use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic"))
             
             if st.button("💾 Salvar Alterações da Tabela"):
                 try:
@@ -495,7 +505,6 @@ with aba_agenda:
     st.markdown("---")
     st.subheader("📋 Seus Compromissos Mapeados no Período")
     
-    # Ajuste intelectual: Filtra os compromissos da agenda usando o df_filtrado para respeitar o mês/ano selecionado
     if not df_filtrado.empty:
         df_agenda_filtrada = df_filtrado.copy()
         df_agenda_filtrada["grupo_orcamentario"] = df_agenda_filtrada["grupo_orcamentario"].fillna("").astype(str)
