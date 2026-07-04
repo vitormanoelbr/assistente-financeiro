@@ -116,7 +116,6 @@ mes_selected_num = st.sidebar.selectbox(
 
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
-# 🏷️ FILTRO DE BUSCA POR TAGS (Ex: #filho, #viagem)
 st.sidebar.markdown("---")
 st.sidebar.header("🏷️ Rastreamento Inteligente")
 tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #filho, #viagem").strip().lower()
@@ -194,7 +193,6 @@ if supabase:
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
             
-            # 🚀 INTERCEPÇÃO DO FILTRO DE TAGS (#filho)
             if tag_busca:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
                 df_filtrado = df_filtrado[df_filtrado["descricao_lower"].str.contains(tag_busca, na=False)]
@@ -227,7 +225,7 @@ if supabase:
                         gastos_essencial += val
                     elif "30% Estilo de Vida" in grupo:
                         gastos_estilo += val
-                    elif "20% Aporte" in grupo:
+                    elif "20% Aporte" in group := grupo:
                         gastos_aporte_mes += val
                     elif "💼 Custos de Negócio" in grupo:
                         gastos_negocio += val
@@ -254,7 +252,7 @@ if st.sidebar.button("💾 Salvar Renda Base"):
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
             "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
         }).execute()
-        st.sidebar.success("Renda atualizada com sucesso!")
+        st.sidebar.success("Renda updated com sucesso!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Erro ao salvar perfil: {e}")
@@ -294,7 +292,7 @@ MAPA_CATEGORIAS = {
     ]
 }
 
-aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", "🐷 Meus Porquinhos", "📅 Agenda de Compromissos"])
+aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", "🐷 Meus Porquinhos & Rumo ao Milhão", "📅 Agenda de Compromissos"])
 
 # ==================== ABA 1 ====================
 with aba_painel:
@@ -341,7 +339,7 @@ with aba_painel:
     st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
-    # --- 🍩 GRÁFICO DONUT ---
+    # --- Gráfico Donut ---
     try:
         df_Seguro = df_filtrado.copy() if not df_filtrado.empty else pd.DataFrame(columns=["grupo_orcamentario", "descricao", "satisfacao", "valor", "tipo"])
         df_Seguro["grupo_orcamentario"] = df_Seguro["grupo_orcamentario"].fillna("").astype(str)
@@ -451,19 +449,19 @@ with aba_painel:
         else:
             st.info("💡 Nenhum lançamento real encontrado com os filtros atuais.")
 
-# ==================== ABA 2 ====================
+# ==================== ABA 2 (REESTRUTURADA) ====================
 with aba_porquinhos:
-    st.title("🐷 Meus Porquinhos")
+    st.title("🐷 Meus Porquinhos & Metas Individuais")
+    st.caption("Acompanhe o dinheiro real carimbado e guardado para cada objetivo da sua conta.")
     st.markdown("---")
     
+    total_patrimonio_guardado = 0.0
+    
     if dicionario_metas_alvo:
-        dados_metas_grafico = []
         for nome_meta, valor_alvo in dicionario_metas_alvo.items():
             guardado = dicionario_aportes_acumulados.get(nome_meta, 0.0)
+            total_patrimonio_guardado += guardado
             falta_guardar = max(valor_alvo - guardado, 0.0)
-            
-            dados_metas_grafico.append({"Meta": nome_meta, "Estado": "Guardado (R$)", "Valor": guardado})
-            dados_metas_grafico.append({"Meta": nome_meta, "Estado": "Falta Pagar (R$)", "Valor": falta_guardar})
             
             st.subheader(f"{nome_meta}")
             c1, c2, c3 = st.columns(3)
@@ -472,9 +470,70 @@ with aba_porquinhos:
             c3.metric(label="Quanto Falta Alocar", value=f"R$ {falta_guardar:,.2f}")
             
             st.progress(min(guardado / valor_alvo, 1.0) if valor_alvo > 0 else 0.0)
+            st.markdown(f"**Progresso do Objetivo:** {(guardado / valor_alvo) * 100:.1f}%" if valor_alvo > 0 else "0.0%")
             st.markdown("---")
     else:
         st.info("💡 Você ainda não criou nenhum porquinho.")
+
+    # ==================== 🚀 O MOTOR DO PRIMEIRO MILHÃO ====================
+    st.title("🚀 Estrada Estratégica Rumo ao 1 Milhão")
+    st.caption("Abaixo está o seu plano de guerra comportamental. O sistema calcula o tempo exato para cravar cada degrau baseando-se no seu patrimônio acumulado e no seu aporte mensal teórico.")
+    
+    st.markdown(f"**💰 Seu Patrimônio Consolidado Atual:** R$ {total_patrimonio_guardado:,.2f}")
+    st.markdown(f"**📈 Seu Aporte Mensal Planejado (20%):** R$ {META_APORTE_MENSAL:,.2f} /mês")
+    
+    # Parâmetro de inteligência: Taxa líquida conservadora de 0.8% ao mês (já descontando inflação/imposto médio estimado)
+    TAXA_MENSAL_LIQUIDA = 0.008 
+    
+    # Definição dos degraus estratégicos do milhão
+    degraus_objetivos = [
+        {"alvo": 10000.0, "nome": "🧱 R$ 10k — Reserva de Segurança Base"},
+        {"alvo": 50000.0, "nome": "🎯 R$ 50k — O Primeiro Impulso Real"},
+        {"alvo": 100000.0, "nome": "💎 R$ 100k — O Lote de Elite Psicológico"},
+        {"alvo": 250000.0, "nome": "🏰 R$ 250k — Um Quarto do Caminho Concluído"},
+        {"alvo": 500000.0, "nome": "⚔️ R$ 500k — Meio Milhão (Reta de Aceleração)"},
+        {"alvo": 1000000.0, "nome": "👑 R$ 1 Milhão — Liberdade Financeira Fundada"}
+    ]
+    
+    st.markdown("### 🏁 Checklist de Conquista Intermediária")
+    
+    # Motor matemático iterativo de juros compostos mês a mês
+    for degrau in degraus_objetivos:
+        alvo_valor = degrau["alvo"]
+        nome_degrau = degrau["nome"]
+        
+        if total_patrimonio_guardado >= alvo_valor:
+            # Degrau já conquistado
+            st.success(f"✅ **{nome_degrau}** — **CONQUISTADO!** Você já passou desse marco.")
+        else:
+            # Calcula quantos meses faltam usando projeção de juros compostos + aportes
+            saldo_simulado = total_patrimonio_guardado
+            meses_necessarios = 0
+            
+            # Limite de segurança para evitar loops infinitos caso o aporte seja zero
+            if META_APORTE_MENSAL <= 0 and TAXA_MENSAL_LIQUIDA <= 0:
+                meses_necessarios = 999
+            else:
+                while saldo_simulado < alvo_valor and meses_necessarios < 600:
+                    saldo_simulado = (saldo_simulado * (1 + TAXA_MENSAL_LIQUIDA)) + META_APORTE_MENSAL
+                    meses_necessarios += 1
+            
+            # Cálculo da data prevista de conquista
+            if meses_necessarios < 600:
+                data_conquista = hoje + datetime.timedelta(days=int(meses_necessarios * 30.41))
+                mes_ano_texto = data_conquista.strftime("%B / %Y").capitalize()
+                
+                # Exibição do progresso em direção ao degrau atual
+                porcentagem_degrau = min((total_patrimonio_guardado / alvo_valor) * 100, 100.0)
+                
+                st.markdown(f"🔒 **{nome_degrau}**")
+                st.write(f"Faltam **{meses_necessarios} meses** — Previsão de conquista: **{mes_ano_texto}**")
+                st.progress(porcentagem_degrau / 100.0)
+                st.caption(f"Falta arrecadar R$ {alvo_valor - total_patrimonio_guardado:,.2f} ({porcentagem_degrau:.1f}% concluído)")
+            else:
+                st.markdown(f"🔒 **{nome_degrau}**")
+                st.warning("⚠️ Ajuste ou configure um aporte mensal na barra lateral para calcular a linha do milhão.")
+        st.markdown("---")
 
 # ==================== ABA 3 ====================
 with aba_agenda:
@@ -527,14 +586,12 @@ with aba_agenda:
     st.markdown("---")
     st.subheader("📋 Seus Compromissos Mapeados no Período")
     
-    # Extração limpa e isolada sem interferência do filtro global de tags textuais da barra lateral
     if supabase and not df_todos_dados.empty:
         df_agenda_pura = df_todos_dados.copy()
         df_agenda_pura["grupo_orcamentario"] = df_agenda_pura["grupo_orcamentario"].fillna("").astype(str)
         df_agenda_pura["ano"] = pd.to_datetime(df_agenda_pura["data_dt"]).dt.year
         df_agenda_pura["mes"] = pd.to_datetime(df_agenda_pura["data_dt"]).dt.month
         
-        # Filtro temporal estrito do mês selecionado
         df_agenda_pura = df_agenda_pura[(df_agenda_pura["ano"] == ano_selected) & (df_agenda_pura["mes"] == mes_selected_num)]
         df_agenda_pura = df_agenda_pura[df_agenda_pura["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)]
         
@@ -547,14 +604,12 @@ with aba_agenda:
                 tipo_item = str(row["tipo"])
                 data_venc = row["data"]
                 
-                # Interface por blocos de controle para liquidação instantânea
                 col_c1, col_c2, col_c3 = st.columns([3, 1, 1])
                 col_c1.write(f"📅 **{data_venc}** - {desc_pura} | **R$ {valor_item:,.2f}**")
                 
                 if "CONTAS A PAGAR" in grupo_item:
                     col_c2.caption("🔴 A Pagar")
                     if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
-                        # Motor de Baixa Automática: Deleta a agenda e lança na movimentação real
                         supabase.table("movimentacoes").delete().eq("id", id_item).execute()
                         supabase.table("movimentacoes").insert({
                             "data": str(hoje), "valor": valor_item, "tipo": tipo_item,
