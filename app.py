@@ -99,13 +99,8 @@ def deslogar_usuario():
 if st.sidebar.button("🚪 Sair da Conta"):
     deslogar_usuario()
 
-# --- ⚙️ PERFIL & FILTROS (SIDEBAR) ---
-st.sidebar.header("⚙️ Configurações do Perfil")
-RENDA_BASE = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=2500.00, step=50.0, format="%.2f")
-
-st.sidebar.markdown("---")
+# --- 📅 FILTROS DE TEMPO (SIDEBAR) ---
 st.sidebar.header("📅 Filtros de Tempo")
-
 hoje = datetime.date.today()
 ano_selected = st.sidebar.selectbox("Ano de Análise:", [hoje.year, hoje.year - 1, hoje.year + 1], index=0)
 
@@ -121,11 +116,8 @@ mes_selected_num = st.sidebar.selectbox(
 
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
-# --- PROCESSAMENTO LÓGICO ---
-LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
-LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
-META_APORTE_MENSAL = RENDA_BASE * 0.20           
-
+# --- PROCESSAMENTO LÓGICO & EXTRAÇÃO DE DADOS ---
+renda_base_usuario = 2500.00  # Valor padrão de fallback seguro
 faturamento_extra_mes = 0.0
 gastos_reais_mes = 0.0
 
@@ -156,12 +148,18 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. Varredura Global
+            # 1. Varredura Global de Parâmetros e Configurações
             for item in res_data:
                 grupo = item.get("grupo_orcamentario") or ""
                 subcat = item.get("subcategoria") or ""
                 tipo_mov = item.get("tipo", "Gasto ou Investimento (Saída)")
                 val_mov = float(item["valor"])
+                desc = item.get("descricao") or ""
+                
+                # Hacker de Infraestrutura: Deteta se o utilizador tem uma renda base salva no perfil histórico
+                if "[CONFIG_PERFIL]" in desc and "Renda Base Nativa" in subcat:
+                    renda_base_usuario = val_mov
+                    continue
                 
                 if "📅 AGENDA" in grupo:
                     continue
@@ -179,7 +177,7 @@ if supabase:
                 if "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
-            # 2. Filtragem Temporal
+            # 2. Filtragem Temporal Restrita
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
@@ -192,11 +190,15 @@ if supabase:
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
                 
-            # 3. Consolidação Mensal
+            # 3. Consolidação Mensal Real
             for _, row in df_filtrado.iterrows():
                 val = float(row["valor"])
                 grupo = str(row["grupo_orcamentario"] or "")
                 tipo_mov = row.get("tipo", "Gasto ou Investimento (Saída)")
+                desc = str(row["descricao"] or "")
+                
+                if "[CONFIG_PERFIL]" in desc:
+                    continue
                 
                 if "📅 AGENDA: CONTAS A PAGAR" in grupo:
                     agenda_a_pagar_mes += val
@@ -228,7 +230,34 @@ if supabase:
         else:
             st.error(f"Erro na validação de segurança: {e}")
 
-receitas_totais_calculadas = RENDA_BASE + faturamento_extra_mes
+# INTERFACE SIDEBAR: Configuração da Renda Base Personalizada por Utilizador com salvamento em Nuvem
+st.sidebar.markdown("---")
+st.sidebar.header("⚙️ Configurações do Perfil")
+nova_renda_input = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=renda_base_usuario, step=50.0, format="%.2f")
+
+if st.sidebar.button("💾 Salvar Renda Base"):
+    try:
+        # Se já existir uma configuração antiga, limpamos para não duplicar
+        if not df_todos_dados.empty:
+            supabase.table("movimentacoes").delete().eq("descricao", "[CONFIG_PERFIL] Renda Base").eq("user_id", USER_ID).execute()
+        
+        # Insere a nova configuração customizada vinculada ao user_id logado
+        supabase.table("movimentacoes").insert({
+            "data": str(hoje), "valor": float(nova_renda_input), "tipo": "Faturamento ou Receita (Entrada)",
+            "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
+            "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
+        }).execute()
+        st.sidebar.success("Renda atualizada com sucesso!")
+        st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Erro ao salvar perfil: {e}")
+
+# Atualização dos limites matemáticos baseando-se no perfil dinâmico extraído do banco de dados
+LIMITE_ESSENCIAL = renda_base_usuario * 0.50       
+LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
+META_APORTE_MENSAL = renda_base_usuario * 0.20           
+
+receitas_totais_calculadas = renda_base_usuario + faturamento_extra_mes
 saldo_disponivel_caixa = receitas_totais_calculadas - gastos_reais_mes
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
@@ -270,7 +299,7 @@ with aba_painel:
     c_caixa2.metric(label="Saldo Atual em Caixa", value=f"R$ {saldo_disponivel_caixa:,.2f}")
     
     if saldo_livre_puro >= 0:
-        c_caixa3.metric(label="💰 Dinheiro de Bolso (Livre Real)", value=f"R$ {saldo_livre_puro:,.2f}", help="Valor descontando as travas planejadas do método 50/30/20.")
+        c_caixa3.metric(label="💰 Dinheiro de Bolso (Livre Real)", value=f"R$ {saldo_livre_puro:,.2f}", help="Valor descontando as fatias planejadas do método 50/30/20.")
     else:
         c_caixa3.metric(label="🚨 Alerta Orçamentário", value=f"R$ {saldo_livre_puro:,.2f}", delta="Abaixo do Planejado!")
 
@@ -304,14 +333,17 @@ with aba_painel:
     st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
-    # --- 🛡️ NOVO: GRÁFICO DONUT DE DISTRIBUIÇÃO PATRIMONIAL ---
+    # --- 🍩 GRÁFICO DONUT DE DISTRIBUIÇÃO ---
     try:
         df_Seguro = df_filtrado.copy() if not df_filtrado.empty else pd.DataFrame(columns=["grupo_orcamentario", "descricao", "satisfacao", "valor", "tipo"])
         df_Seguro["grupo_orcamentario"] = df_Seguro["grupo_orcamentario"].fillna("").astype(str)
         df_Seguro["tipo"] = df_Seguro["tipo"].fillna("").astype(str)
+        df_Seguro["descricao"] = df_Seguro["descricao"].fillna("").astype(str)
         
         df_saidas = df_Seguro[
             (~df_Seguro["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)) & 
+            (~df_Seguro["grupo_orcamentario"].str.contains("⚙️ CONFIGURAÇÃO", na=False)) & 
+            (~df_Seguro["descricao"].str.contains("\[CONFIG_PERFIL\]", na=False)) &
             (df_Seguro["tipo"].str.contains("Saída", na=False))
         ].copy()
         
@@ -326,13 +358,17 @@ with aba_painel:
             )
             fig_donut.update_layout(margin=dict(t=10, b=10, l=10, r=10))
             st.plotly_chart(fig_donut, use_container_width=True)
-    except Exception as e_pizza:
+    except Exception:
         pass
 
     # --- MOTOR DO GRÁFICO DE COMPORTAMENTO ---
     try:
-        df_raiox_limpo = df_Seguro[~df_Seguro["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
+        df_raiox_limpo = df_Seguro[
+            (~df_Seguro["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)) &
+            (~df_Seguro["grupo_orcamentario"].str.contains("⚙️ CONFIGURAÇÃO", na=False))
+        ].copy()
         df_raiox_limpo = df_raiox_limpo[~df_raiox_limpo["descricao"].str.contains("Meta Criada", na=False)]
+        df_raiox_limpo = df_raiox_limpo[~df_raiox_limpo["descricao"].str.contains("\[CONFIG_PERFIL\]", na=False)]
         
         if not df_raiox_limpo.empty and "satisfacao" in df_raiox_limpo.columns:
             st.markdown("---")
@@ -397,7 +433,7 @@ with aba_painel:
             try:
                 dados_gasto = {
                     "data": str(data_movimento), "valor": float(final_valor), "tipo": tipo,
-                    "descricao": final_desc, "grupo_orcamentario": group_orcamentario if 'group_orcamentario' in locals() else grupo_orcamentario,
+                    "descricao": final_desc, "grupo_orcamentario": grupo_orcamentario,
                     "subcategoria": final_subcat, "satisfacao": satisfacao,
                     "user_id": USER_ID
                 }
@@ -415,7 +451,12 @@ with aba_painel:
         df_editor_limpo = df_filtrado.copy() if not df_filtrado.empty else pd.DataFrame()
         if not df_editor_limpo.empty:
             df_editor_limpo["grupo_orcamentario"] = df_editor_limpo["grupo_orcamentario"].fillna("").astype(str)
-            df_editor_limpo = df_editor_limpo[~df_editor_limpo["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)]
+            df_editor_limpo["descricao"] = df_editor_limpo["descricao"].fillna("").astype(str)
+            df_editor_limpo = df_editor_limpo[
+                (~df_editor_limpo["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)) &
+                (~df_editor_limpo["grupo_orcamentario"].str.contains("⚙️ CONFIGURAÇÃO", na=False)) &
+                (~df_editor_limpo["descricao"].str.contains("\[CONFIG_PERFIL\]", na=False))
+            ]
         
         if not df_editor_limpo.empty:
             df_editor = df_editor_limpo[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
@@ -469,7 +510,7 @@ with aba_porquinhos:
             st.markdown(f"**Preenchimento:** {(guardado / valor_alvo) * 100:.1f}%")
             st.markdown("---")
             
-        st.subheader("📈 Dashboard Comparativo de Objetivos")
+        st.subheader("📈 Dashboard Compartativo de Objetivos")
         df_porquinhos_fig = pd.DataFrame(dados_metas_grafico)
         fig_porquinhos = px.bar(df_porquinhos_fig, x="Meta", y="Valor", color="Estado", title="Raio-X de Evolução Patrimonial Combinada",
                                 color_discrete_map={"Guardado (R$)": "#00FF66", "Falta Pagar (R$)": "#444444"})
