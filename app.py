@@ -132,6 +132,7 @@ gastos_reais_mes = 0.0
 gastos_essencial = 0.0
 gastos_estilo = 0.0
 gastos_aporte_mes = 0.0
+gastos_negocio = 0.0
 
 DIVIDA_TOTAL_INICIAL = 0.0
 total_pago_divida = 0.0
@@ -215,8 +216,10 @@ if supabase:
                         gastos_essencial += val
                     elif "30% Estilo de Vida" in grupo:
                         gastos_estilo += val
-                    elif "20% Aporte" in group or "20% Aporte" in grupo:
+                    elif "20% Aporte" in grupo:
                         gastos_aporte_mes += val
+                    elif "💼 Custos de Negócio" in grupo:
+                        gastos_negocio += val
                     
     except Exception as e:
         if "JWT expired" in str(e) or "PGRST303" in str(e):
@@ -229,7 +232,7 @@ receitas_totais_calculadas = RENDA_BASE + faturamento_extra_mes
 saldo_disponivel_caixa = receitas_totais_calculadas - gastos_reais_mes
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
-saldo_livre_puro = receitas_totais_calculadas - max(gastos_essencial, LIMITE_ESSENCIAL) - max(gastos_estilo, LIMITE_ESTILO_DE_VIDA) - max(gastos_aporte_mes, META_APORTE_MENSAL)
+saldo_livre_puro = receitas_totais_calculadas - max(gastos_essencial, LIMITE_ESSENCIAL) - max(gastos_estilo, LIMITE_ESTILO_DE_VIDA) - max(gastos_aporte_mes, META_APORTE_MENSAL) - gastos_negocio
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
 if not lista_porquinhos_existentes:
@@ -301,20 +304,39 @@ with aba_painel:
     st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
-    # --- 🛡️ MOTOR DO GRÁFICO OTIMIZADO ---
+    # --- 🛡️ NOVO: GRÁFICO DONUT DE DISTRIBUIÇÃO PATRIMONIAL ---
     try:
-        df_Seguro = df_filtrado.copy() if not df_filtrado.empty else pd.DataFrame(columns=["grupo_orcamentario", "descricao", "satisfacao", "valor"])
+        df_Seguro = df_filtrado.copy() if not df_filtrado.empty else pd.DataFrame(columns=["grupo_orcamentario", "descricao", "satisfacao", "valor", "tipo"])
         df_Seguro["grupo_orcamentario"] = df_Seguro["grupo_orcamentario"].fillna("").astype(str)
-        df_Seguro["descricao"] = df_Seguro["descricao"].fillna("").astype(str)
-        df_Seguro["satisfacao"] = df_Seguro["satisfacao"].fillna("2 - Útil / Desejável").astype(str)
+        df_Seguro["tipo"] = df_Seguro["tipo"].fillna("").astype(str)
         
+        df_saidas = df_Seguro[
+            (~df_Seguro["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)) & 
+            (df_Seguro["tipo"].str.contains("Saída", na=False))
+        ].copy()
+        
+        if not df_saidas.empty:
+            st.markdown("---")
+            st.subheader("🍩 Distribuição Macro do seu Dinheiro")
+            df_pizza = df_saidas.groupby("grupo_orcamentario")["valor"].sum().reset_index()
+            fig_donut = px.pie(
+                df_pizza, values="valor", names="grupo_orcamentario", 
+                hole=0.4,
+                color_discrete_sequence=px.colors.qualitative.Safe
+            )
+            fig_donut.update_layout(margin=dict(t=10, b=10, l=10, r=10))
+            st.plotly_chart(fig_donut, use_container_width=True)
+    except Exception as e_pizza:
+        pass
+
+    # --- MOTOR DO GRÁFICO DE COMPORTAMENTO ---
+    try:
         df_raiox_limpo = df_Seguro[~df_Seguro["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
         df_raiox_limpo = df_raiox_limpo[~df_raiox_limpo["descricao"].str.contains("Meta Criada", na=False)]
         
-        st.markdown("---")
-        st.subheader(f"🧠 Raio-X de Necessidade Real ({janela_tempo})")
-        
-        if not df_raiox_limpo.empty:
+        if not df_raiox_limpo.empty and "satisfacao" in df_raiox_limpo.columns:
+            st.markdown("---")
+            st.subheader(f"🧠 Raio-X de Necessidade Real ({janela_tempo})")
             df_raiox_limpo["nivel_bruto"] = df_raiox_limpo["satisfacao"].str.strip().str[0]
             df_necessidade = df_raiox_limpo.groupby("nivel_bruto")["valor"].sum().reset_index()
             
@@ -334,7 +356,7 @@ with aba_painel:
             fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_necessidade, use_container_width=True)
         else:
-            # INTERFACE LIMPA: Removeu-se o gráfico mock redundante para evitar poluição visual desnecessária na UI
+            st.markdown("---")
             st.info("💡 Nenhum gasto real efetuado neste período para gerar a análise comportamental.")
     except Exception as erro_grafico:
         st.warning(f"📊 O painel gráfico está sendo recalculado. Detalhe técnico: {erro_grafico}")
@@ -355,7 +377,6 @@ with aba_painel:
         val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=50.0, format="%.2f")
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
-        # CORREÇÃO: Passo mudado para 0.01 para permitir digitação exata de moedas e centavos
         valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=0.01, format="%.2f")
         if criando_novo_porquinho:
             tipo = st.radio("Direção configurada automaticamente:", ["Faturamento ou Receita (Entrada)"])
@@ -376,7 +397,7 @@ with aba_painel:
             try:
                 dados_gasto = {
                     "data": str(data_movimento), "valor": float(final_valor), "tipo": tipo,
-                    "descricao": final_desc, "grupo_orcamentario": grupo_orcamentario,
+                    "descricao": final_desc, "grupo_orcamentario": group_orcamentario if 'group_orcamentario' in locals() else grupo_orcamentario,
                     "subcategoria": final_subcat, "satisfacao": satisfacao,
                     "user_id": USER_ID
                 }
@@ -406,7 +427,7 @@ with aba_painel:
                 try:
                     linhas_atuais_ids = set(dados_editados["ID"].tolist())
                     linhas_originais_ids = set(df_editor["ID"].tolist())
-                    ids_deletados = Boston_ids := linhas_originais_ids - linhas_atuais_ids
+                    ids_deletados = linhas_originais_ids - linhas_atuais_ids
                     for id_del in ids_deletados:
                         supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
                     for _, row in dados_editados.iterrows():
