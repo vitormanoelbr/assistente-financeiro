@@ -225,7 +225,7 @@ if supabase:
                         gastos_essencial += val
                     elif "30% Estilo de Vida" in grupo:
                         gastos_estilo += val
-                    elif "20% Aporte" in group := grupo:
+                    elif "20% Aporte" in grupo:
                         gastos_aporte_mes += val
                     elif "💼 Custos de Negócio" in grupo:
                         gastos_negocio += val
@@ -252,7 +252,7 @@ if st.sidebar.button("💾 Salvar Renda Base"):
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
             "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
         }).execute()
-        st.sidebar.success("Renda updated com sucesso!")
+        st.sidebar.success("Renda atualizada com sucesso!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Erro ao salvar perfil: {e}")
@@ -449,7 +449,7 @@ with aba_painel:
         else:
             st.info("💡 Nenhum lançamento real encontrado com os filtros atuais.")
 
-# ==================== ABA 2 (REESTRUTURADA) ====================
+# ==================== ABA 2 ====================
 with aba_porquinhos:
     st.title("🐷 Meus Porquinhos & Metas Individuais")
     st.caption("Acompanhe o dinheiro real carimbado e guardado para cada objetivo da sua conta.")
@@ -482,10 +482,8 @@ with aba_porquinhos:
     st.markdown(f"**💰 Seu Patrimônio Consolidado Atual:** R$ {total_patrimonio_guardado:,.2f}")
     st.markdown(f"**📈 Seu Aporte Mensal Planejado (20%):** R$ {META_APORTE_MENSAL:,.2f} /mês")
     
-    # Parâmetro de inteligência: Taxa líquida conservadora de 0.8% ao mês (já descontando inflação/imposto médio estimado)
     TAXA_MENSAL_LIQUIDA = 0.008 
     
-    # Definição dos degraus estratégicos do milhão
     degraus_objetivos = [
         {"alvo": 10000.0, "nome": "🧱 R$ 10k — Reserva de Segurança Base"},
         {"alvo": 50000.0, "nome": "🎯 R$ 50k — O Primeiro Impulso Real"},
@@ -497,20 +495,16 @@ with aba_porquinhos:
     
     st.markdown("### 🏁 Checklist de Conquista Intermediária")
     
-    # Motor matemático iterativo de juros compostos mês a mês
     for degrau in degraus_objetivos:
         alvo_valor = degrau["alvo"]
         nome_degrau = degrau["nome"]
         
         if total_patrimonio_guardado >= alvo_valor:
-            # Degrau já conquistado
             st.success(f"✅ **{nome_degrau}** — **CONQUISTADO!** Você já passou desse marco.")
         else:
-            # Calcula quantos meses faltam usando projeção de juros compostos + aportes
             saldo_simulado = total_patrimonio_guardado
             meses_necessarios = 0
             
-            # Limite de segurança para evitar loops infinitos caso o aporte seja zero
             if META_APORTE_MENSAL <= 0 and TAXA_MENSAL_LIQUIDA <= 0:
                 meses_necessarios = 999
             else:
@@ -518,12 +512,9 @@ with aba_porquinhos:
                     saldo_simulado = (saldo_simulado * (1 + TAXA_MENSAL_LIQUIDA)) + META_APORTE_MENSAL
                     meses_necessarios += 1
             
-            # Cálculo da data prevista de conquista
             if meses_necessarios < 600:
                 data_conquista = hoje + datetime.timedelta(days=int(meses_necessarios * 30.41))
                 mes_ano_texto = data_conquista.strftime("%B / %Y").capitalize()
-                
-                # Exibição do progresso em direção ao degrau atual
                 porcentagem_degrau = min((total_patrimonio_guardado / alvo_valor) * 100, 100.0)
                 
                 st.markdown(f"🔒 **{nome_degrau}**")
