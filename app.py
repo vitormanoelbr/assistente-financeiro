@@ -118,9 +118,9 @@ tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #
 # --- PROCESSAMENTO LÓGICO ---
 renda_base_usuario = 2500.00  
 faturamento_extra_mes = 0.0
-gastos_reais_mes = 0.0       # Tudo o que foi consumido do orçamento
-saidas_imediatas_caixa = 0.0 # Apenas Pix / Débito reais do mês
-fatura_acumulada_mes = 0.0   # Apenas compras no Crédito direcionadas para este mês
+gastos_reais_mes = 0.0       
+saidas_imediatas_caixa = 0.0 
+fatura_acumulada_mes = 0.0   
 
 gastos_essencial = 0.0
 gastos_estilo = 0.0
@@ -172,19 +172,17 @@ if supabase:
                 if "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
-            # Filtragem Temporal Geral
+            # Filtragem Temporal Geral Seguro
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
             
-            # --- MOTOR DE INTELIGÊNCIA DO CARTÃO ---
-            # Identifica para qual mês a fatura do cartão deve ir baseado no dia da compra
+            # --- CORREÇÃO DO MOTOR DO CARTÃO ---
             def calcular_mes_fatura(linha):
                 dt = linha["data_dt"]
                 tipo_pgto = str(linha.get("tipo") or "")
-                if "💳 Saída Cartão de Crédito" in tipo_pgto:
+                if "💳" in tipo_pgto or "Cartão" in tipo_pgto:
                     if dt.day > 20:
-                        # Se passou do dia 20, vai para o mês seguinte
                         proximo_mes = dt.month + 1 if dt.month < 12 else 1
                         proximo_ano = dt.year if dt.month < 12 else dt.year + 1
                         return proximo_ano, proximo_mes
@@ -195,10 +193,10 @@ if supabase:
                     lambda r: pd.Series(calcular_mes_fatura(r)), axis=1
                 )
                 
-                # Para despesas comuns filtramos por data, para cartão filtramos por vencimento de fatura
+                # Separação flexível de despesas comuns e faturas de cartão
                 df_filtrado = df_filtrado[
-                    ((df_filtrado["tipo"].str.contains("💳")) & (df_filtrado["ano_fatura"] == ano_selected) & (df_filtrado["mes_fatura"] == mes_selected_num)) |
-                    ((~df_filtrado["tipo"].str.contains("💳")) & (df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num))
+                    ((df_filtrado["tipo"].str.contains("💳|Cartão", na=False)) & (df_filtrado["ano_fatura"] == ano_selected) & (df_filtrado["mes_fatura"] == mes_selected_num)) |
+                    ((~df_filtrado["tipo"].str.contains("💳|Cartão", na=False)) & (df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num))
                 ]
 
             if janela_tempo == "Últimos 7 Dias":
@@ -210,7 +208,7 @@ if supabase:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
                 df_filtrado = df_filtrado[df_filtrado["descricao_lower"].str.contains(tag_busca, na=False)]
                 
-            # Consolidação Financeira
+            # Consolidação robusta de saídas reais
             for _, row in df_filtrado.iterrows():
                 val = float(row["valor"])
                 grupo = str(row["grupo_orcamentario"] or "")
@@ -228,14 +226,14 @@ if supabase:
                 if "🚀 20% Aporte" in grupo and "Entrada" in tipo_mov:
                     continue
                 
-                if "Faturamento" in tipo_mov:
+                if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
                     faturamento_extra_mes += val
                 else:
                     gastos_reais_mes += val
-                    if "📱 Saída Dinheiro / Pix" in tipo_mov:
-                        saidas_imediatas_caixa += val
-                    elif "💳 Saída Cartão de Crédito" in tipo_mov:
+                    if "💳" in tipo_mov or "Cartão" in tipo_mov:
                         fatura_acumulada_mes += val
+                    else:
+                        saidas_imediatas_caixa += val
                     
                     if "50% Essencial" in grupo:
                         gastos_essencial += val
@@ -247,7 +245,7 @@ if supabase:
                         gastos_negocio += val
                     
     except Exception as e:
-        st.error(f"Erro na validação de segurança: {e}")
+        st.error(f"Erro na validação: {e}")
 
 # Configurações Sidebar
 st.sidebar.markdown("---")
@@ -266,14 +264,13 @@ if st.sidebar.button("💾 Salvar Renda Base"):
         st.sidebar.success("Renda atualizada!")
         st.rerun()
     except Exception as e:
-        st.sidebar.error(f"Erro ao salvar: {e}")
+        st.sidebar.error(f"Erro: {e}")
 
 LIMITE_ESSENCIAL = renda_base_usuario * 0.50       
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
 META_APORTE_MENSAL = renda_base_usuario * 0.20           
 
 receitas_totais_calculadas = renda_base_usuario + faturamento_extra_mes if not tag_busca else faturamento_extra_mes
-# Proteção de Saldo: O cartão não consome a conta bancária corrente até que você pague a fatura
 saldo_disponivel_caixa = receitas_totais_calculadas - saidas_imediatas_caixa
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
@@ -295,7 +292,7 @@ aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", 
 with aba_painel:
     st.title("📲 Meu Planner Financeiro")
     
-    st.markdown(f"### 🏦 Saúde Disponível do Caixa ({lista_meses[mes_selected_num]})")
+    st.markdown(f"### 👑 Saúde Disponível do Caixa ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
     c_caixa1.metric(label="Conta Corrente (Saldo Vivo)", value=f"R$ {saldo_disponivel_caixa:,.2f}")
     c_caixa2.metric(label="🔮 Fatura Estimada Cartão", value=f"R$ {fatura_acumulada_mes:,.2f}", delta="-A pagar no vencimento", delta_color="inverse")
@@ -313,7 +310,7 @@ with aba_painel:
 
     # Donut Chart
     try:
-        df_saidas = df_filtrado[df_filtrado["tipo"].str.contains("Saída", na=False)].copy()
+        df_saidas = df_filtrado[df_filtrado["tipo"].str.contains("Saída|📱|💳", na=False)].copy()
         if not df_saidas.empty:
             st.markdown("---")
             st.subheader("🍩 Distribuição do Filtro Atual")
@@ -391,7 +388,7 @@ with aba_painel:
                 st.success("🔄 Alterações sincronizadas!")
                 st.rerun()
             except Exception as e:
-                st.error(f"Erro ao salvar alterações: {e}")
+                st.error(f"Erro: {e}")
 
 # ==================== ABA 2 (PORQUINHOS) ====================
 with aba_porquinhos:
@@ -476,7 +473,7 @@ with aba_agenda:
                 col_c1, col_c2, col_c3 = st.columns([3, 1, 1])
                 col_c1.write(f"📅 **{row['data']}** - {desc_pura} | **R$ {valor_item:,.2f}**")
                 if "CONTAS A PAGAR" in str(row["grupo_orcamentario"]):
-                    col_c2.caption("BC001 - A Pagar")
+                    col_c2.caption("A Pagar")
                     if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
                         supabase.table("movimentacoes").delete().eq("id", id_item).execute()
                         supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
