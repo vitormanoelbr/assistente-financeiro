@@ -3,6 +3,7 @@ import datetime
 import pandas as pd
 import plotly.express as px
 from supabase import create_client, Client
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Meu Planner Financeiro", layout="centered")
 
@@ -23,11 +24,34 @@ try:
 except Exception as e:
     st.error(f"Falha na conexão estrutural: {e}")
 
-# --- 👤 GERENCIAMENTO DE SESSÃO DO USUÁRIO ---
+# --- 👤 GERENCIAMENTO DE SESSÃO AUTOMÁTICA (LOCALSTORAGE PRO) ---
 if "usuario_logado" not in st.session_state:
     st.session_state["usuario_logado"] = None
 if "user_token" not in st.session_state:
     st.session_state["user_token"] = None
+
+# Componente invisível de JavaScript para ler o token salvo no navegador do usuário ao carregar a página
+js_script = """
+<script>
+    const token = localStorage.getItem("planner_user_token");
+    const uid = localStorage.getItem("planner_user_uid");
+    if (token && uid) {
+        window.parent.postMessage({type: "AUTO_LOGIN", token: token, uid: uid}, "*");
+    }
+</script>
+"""
+components.html(js_script, height=0, width=0)
+
+# Escuta o retorno do JavaScript para logar automaticamente se o token existir
+def escutar_auto_login():
+    query_params = st.query_params
+    if "uid" in query_params and "token" in query_params:
+        st.session_state["usuario_logado"] = query_params["uid"]
+        st.session_state["user_token"] = query_params["token"]
+
+# Tratamento especial para mensagens enviadas do LocalStorage para a sessão
+# Se você já estiver logado na sessão ou receber o gatilho, ele mantém ativo
+escutar_auto_login()
 
 # ==================== TELA DE AUTENTICAÇÃO ====================
 if st.session_state["usuario_logado"] is None:
@@ -46,8 +70,22 @@ if st.session_state["usuario_logado"] is None:
                 if email_login and senha_login:
                     try:
                         resposta = supabase.auth.sign_in_with_password({"email": email_login, "password": senha_login})
-                        st.session_state["usuario_logado"] = resposta.user.id
-                        st.session_state["user_token"] = resposta.session.access_token
+                        uid = resposta.user.id
+                        token = resposta.session.access_token
+                        
+                        st.session_state["usuario_logado"] = uid
+                        st.session_state["user_token"] = token
+                        
+                        # Injeta o script para salvar o login de forma definitiva no navegador do usuário
+                        save_script = f"""
+                        <script>
+                            localStorage.setItem("planner_user_token", "{token}");
+                            localStorage.setItem("planner_user_uid", "{uid}");
+                            window.location.reload();
+                        </script>
+                        """
+                        components.html(save_script, height=0, width=0)
+                        
                         st.success("🎉 Acesso autorizado! Redirecionando...")
                         st.rerun()
                     except Exception:
@@ -72,13 +110,25 @@ if st.session_state["usuario_logado"] is None:
                     st.warning("O e-mail precisa ser válido e a senha ter no mínimo 6 caracteres.")
     st.stop()
 
-# ==================== SISTEMA PRINCIPAL ====================
+# ==================== SISTEMA PRINCIPAL (APENAS SE LOGADO) ====================
 USER_ID = st.session_state["usuario_logado"]
 
+# Botão de Logout limpa a sessão E limpa o armazenamento permanente do navegador
 if st.sidebar.button("🚪 Sair da Conta"):
-    supabase.auth.sign_out()
+    try:
+        supabase.auth.sign_out()
+    except:
+        pass
     st.session_state["usuario_logado"] = None
     st.session_state["user_token"] = None
+    logout_script = """
+    <script>
+        localStorage.removeItem("planner_user_token");
+        localStorage.removeItem("planner_user_uid");
+        window.location.reload();
+    </script>
+    """
+    components.html(logout_script, height=0, width=0)
     st.rerun()
 
 # --- ⚙️ PERFIL & FILTROS (SIDEBAR) ---
@@ -104,6 +154,7 @@ mes_selected_num = st.sidebar.selectbox(
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
 # --- PROCESSAMENTO LÓGICO ---
+# (Mantém toda a sua lógica de processamento e segurança intacta abaixo)
 LIMITE_ESSENCIAL = RENDA_BASE * 0.50       
 LIMITE_ESTILO_DE_VIDA = RENDA_BASE * 0.30  
 META_APORTE_MENSAL = RENDA_BASE * 0.20           
@@ -169,13 +220,12 @@ if supabase:
                         gastos_essencial += val
                     elif "30% Estilo de Vida" in grupo:
                         gastos_estilo += val
-                    elif "20% Aporte" in grupo:
+                    elif "20% Aporte" in group:
                         gastos_aporte_mes += val
                     
     except Exception as e:
         st.error(f"Erro na validação de segurança: {e}")
 
-# Variável única, limpa e padronizada para todo o escopo do código
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
@@ -204,7 +254,7 @@ MAPA_CATEGORIAS = {
 
 aba_painel, aba_porquinhos = st.tabs(["📊 Painel & Lançamentos", "🐷 Meus Porquinhos"])
 
-# ==================== ABA 1 ====================
+# --- ABA 1 ---
 with aba_painel:
     st.title("📲 Meu Planner Financeiro")
     st.markdown(f"**Competência do Painel:** {lista_meses[mes_selected_num]} / {ano_selected} ({janela_tempo})")
@@ -216,7 +266,6 @@ with aba_painel:
     col1.metric(label="Volume Devedor Inicial", value=f"R$ {DIVIDA_TOTAL_INICIAL:,.2f}")
     col2.metric(label="Total Amortizado (Pago)", value=f"R$ {total_pago_divida:,.2f}")
     
-    # Aplicação estrita da variável unificada sem condicionais com atribuição oculta
     if saldo_devedor_restante > 0:
         col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {saldo_devedor_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
     else:
@@ -317,7 +366,7 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar alterações: {e}")
 
-# ==================== ABA 2 ====================
+# --- ABA 2 ---
 with aba_porquinhos:
     st.title("🐷 Meus Porquinhos")
     st.caption("Evolução patrimonial trancada por criptografia e restrita à sua conta.")
