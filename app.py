@@ -290,7 +290,7 @@ with aba_painel:
     st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
-    # --- 📊 MOTOR DO GRÁFICO REESTRUTURADO DO ZERO ---
+    # --- 🛡️ MOTOR DO GRÁFICO BLINDADO ---
     if not df_filtrado.empty:
         df_raiox_limpo = df_filtrado[~df_filtrado["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
         df_raiox_limpo = df_raiox_limpo[~df_raiox_limpo["descricao"].str.contains("Meta Criada", na=False)]
@@ -299,12 +299,17 @@ with aba_painel:
             st.markdown("---")
             st.subheader("🧠 Raio-X de Necessidade Real (Mês Filtrado)")
             
-            # Criamos a classificação de texto direto em cada linha sem agrupar antes
-            mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
-            df_raiox_limpo["Nível de Importância"] = df_raiox_limpo["satisfacao"].astype(str).str[0].map(mapa_nomes)
+            # 1. Pega apenas o primeiro número da string bruto para agrupar (ex: "1" de "1 - Impulsivo...")
+            df_raiox_limpo["nivel_bruto"] = df_raiox_limpo["satisfacao"].astype(str).str[0]
             
-            # Agrupamento direto pela coluna final de texto estruturada, matando o risco de KeyError
-            df_necessidade = df_raiox_limpo.groupby("Nível de Importância", as_index=False)["valor"].sum()
+            # 2. Agrupa usando a variável bruta que a gente tem CERTEZA que existe e reseta o index
+            df_necessidade = df_raiox_limpo.groupby("nivel_bruto")["valor"].sum().reset_index()
+            
+            # 3. Mapeia os textos bonitos para o gráfico com proteção contra valores vazios
+            mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
+            df_necessidade["nivel_bruto"] = df_necessidade["nivel_bruto"].map(mapa_nomes).fillna("Outros / Não Informado")
+            
+            # 4. Renomeia as colunas pro padrão final do Plotly sem risco de perder o Index
             df_necessidade.columns = ["Nível de Importância", "Total Gasto (R$)"]
             
             fig_necessidade = px.bar(
@@ -313,7 +318,8 @@ with aba_painel:
                 color_discrete_map={
                     "🚨 1 - Impulsivo / Evitável": "#FF4B4B", 
                     "🟡 2 - Útil / Desejável": "#FFD700", 
-                    "🟢 3 - Indispensável": "#00FF66"
+                    "🟢 3 - Indispensável": "#00FF66",
+                    "Outros / Não Informado": "#888888"
                 }
             )
             fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
@@ -381,7 +387,7 @@ with aba_painel:
                 try:
                     linhas_atuais_ids = set(dados_editados["ID"].tolist())
                     linhas_originais_ids = set(df_editor["ID"].tolist())
-                    ids_deletados = tokens_originais_ids = linhas_originais_ids - linhas_atuais_ids
+                    ids_deletados = linhas_originais_ids - linhas_atuais_ids
                     for id_del in ids_deletados:
                         supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
                     for _, row in dados_editados.iterrows():
@@ -434,7 +440,7 @@ with aba_porquinhos:
 # ==================== ABA 3 ====================
 with aba_agenda:
     st.title("📅 Agenda de Compromissos Financeiros")
-    st.caption("Mapeie seus boletos fixos e contas que tem a receber neste mês para não engenhar surpresas.")
+    st.caption("Mapeie seus boletos fixos e contas que tem a receber neste mês para não esquecer nada.")
     st.markdown("---")
     
     col_agenda1, col_agenda2 = st.columns(2)
