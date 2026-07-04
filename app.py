@@ -99,8 +99,8 @@ def deslogar_usuario():
 if st.sidebar.button("🚪 Sair da Conta"):
     deslogar_usuario()
 
-# --- 📅 FILTROS DE TEMPO (SIDEBAR) ---
-st.sidebar.header("📅 Filtros de Tempo")
+# --- 📅 FILTROS DE TEMPO & TAGS (SIDEBAR) ---
+st.sidebar.header("📅 Filtros do Painel")
 hoje = datetime.date.today()
 ano_selected = st.sidebar.selectbox("Ano de Análise:", [hoje.year, hoje.year - 1, hoje.year + 1], index=0)
 
@@ -116,8 +116,13 @@ mes_selected_num = st.sidebar.selectbox(
 
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
+# 🏷️ FILTRO DE BUSCA POR TAGS (Ex: #filho, #viagem)
+st.sidebar.markdown("---")
+st.sidebar.header("🏷️ Rastreamento Inteligente")
+tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #filho, #viagem").strip().lower()
+
 # --- PROCESSAMENTO LÓGICO & EXTRAÇÃO DE DADOS ---
-renda_base_usuario = 2500.00  # Valor padrão de fallback seguro
+renda_base_usuario = 2500.00  
 faturamento_extra_mes = 0.0
 gastos_reais_mes = 0.0
 
@@ -156,7 +161,6 @@ if supabase:
                 val_mov = float(item["valor"])
                 desc = item.get("descricao") or ""
                 
-                # Hacker de Infraestrutura: Deteta se o utilizador tem uma renda base salva no perfil histórico
                 if "[CONFIG_PERFIL]" in desc and "Renda Base Nativa" in subcat:
                     renda_base_usuario = val_mov
                     continue
@@ -189,6 +193,11 @@ if supabase:
                 df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= inicio_intervalo) & (df_filtrado["data_dt"] <= hoje)]
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
+            
+            # 🚀 INTERCEPÇÃO DO FILTRO DE TAGS (#filho)
+            if tag_busca:
+                df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
+                df_filtrado = df_filtrado[df_filtrado["descricao_lower"].str.contains(tag_busca, na=False)]
                 
             # 3. Consolidação Mensal Real
             for _, row in df_filtrado.iterrows():
@@ -230,18 +239,16 @@ if supabase:
         else:
             st.error(f"Erro na validação de segurança: {e}")
 
-# INTERFACE SIDEBAR: Configuração da Renda Base Personalizada por Utilizador com salvamento em Nuvem
+# INTERFACE SIDEBAR: Renda Base Customizada
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Configurações do Perfil")
 nova_renda_input = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=renda_base_usuario, step=50.0, format="%.2f")
 
 if st.sidebar.button("💾 Salvar Renda Base"):
     try:
-        # Se já existir uma configuração antiga, limpamos para não duplicar
         if not df_todos_dados.empty:
             supabase.table("movimentacoes").delete().eq("descricao", "[CONFIG_PERFIL] Renda Base").eq("user_id", USER_ID).execute()
         
-        # Insere a nova configuração customizada vinculada ao user_id logado
         supabase.table("movimentacoes").insert({
             "data": str(hoje), "valor": float(nova_renda_input), "tipo": "Faturamento ou Receita (Entrada)",
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
@@ -252,12 +259,12 @@ if st.sidebar.button("💾 Salvar Renda Base"):
     except Exception as e:
         st.sidebar.error(f"Erro ao salvar perfil: {e}")
 
-# Atualização dos limites matemáticos baseando-se no perfil dinâmico extraído do banco de dados
+# Atualização dos limites matemáticos dinâmicos
 LIMITE_ESSENCIAL = renda_base_usuario * 0.50       
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
 META_APORTE_MENSAL = renda_base_usuario * 0.20           
 
-receitas_totais_calculadas = renda_base_usuario + faturamento_extra_mes
+receitas_totais_calculadas = renda_base_usuario + faturamento_extra_mes if not tag_busca else faturamento_extra_mes
 saldo_disponivel_caixa = receitas_totais_calculadas - gastos_reais_mes
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
@@ -291,19 +298,18 @@ aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", 
 
 # ==================== ABA 1 ====================
 with aba_painel:
+    if tag_busca:
+        st.warning(f"🔍 **Modo de Rastreamento Ativo:** Mostrando apenas resultados para a tag `{tag_busca}`")
+        
     st.title("📲 Meu Planner Financeiro")
     
     st.markdown(f"### 🏦 Saúde Disponível do Caixa ({janela_tempo})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="Receitas Totais Reais", value=f"R$ {receitas_totais_calculadas:,.2f}")
-    c_caixa2.metric(label="Saldo Atual em Caixa", value=f"R$ {saldo_disponivel_caixa:,.2f}")
-    
-    if saldo_livre_puro >= 0:
-        c_caixa3.metric(label="💰 Dinheiro de Bolso (Livre Real)", value=f"R$ {saldo_livre_puro:,.2f}", help="Valor descontando as fatias planejadas do método 50/30/20.")
-    else:
-        c_caixa3.metric(label="🚨 Alerta Orçamentário", value=f"R$ {saldo_livre_puro:,.2f}", delta="Abaixo do Planejado!")
+    c_caixa1.metric(label="Receitas Mapeadas", value=f"R$ {receitas_totais_calculadas:,.2f}")
+    c_caixa2.metric(label="Saldo Filtrado em Caixa", value=f"R$ {saldo_disponivel_caixa:,.2f}")
+    c_caixa3.metric(label="Total Gasto no Filtro", value=f"R$ {gastos_reais_mes:,.2f}")
 
-    if agenda_a_pagar_mes > 0 or agenda_a_receber_mes > 0:
+    if (agenda_a_pagar_mes > 0 or agenda_a_receber_mes > 0) and not tag_busca:
         st.markdown("#### 🔮 Previsões Mapeadas para o Restante do Mês")
         c_prev1, c_prev2, c_prev3 = st.columns(3)
         c_prev1.metric(label="A Receber Agendado", value=f"R$ {agenda_a_receber_mes:,.2f}")
@@ -312,20 +318,22 @@ with aba_painel:
 
     st.markdown("---")
     st.subheader("📊 Painel de Limites Orçamentários")
-    st.markdown("### 🧮 Situação de Dívidas Estruturadas")
-    col1, col2, col3 = st.columns(3)
-    col1.metric(label="Volume Devedor Inicial", value=f"R$ {DIVIDA_TOTAL_INICIAL:,.2f}")
-    col2.metric(label="Total Amortizado (Pago)", value=f"R$ {total_pago_divida:,.2f}")
     
-    if saldo_devedor_restante > 0:
-        col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {saldo_devedor_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
-    else:
-        col3.metric(label="Saldo Devedor", value="R$ 0,00 🎉", delta="Quitado!")
+    if not tag_busca:
+        st.markdown("### 🧮 Situação de Dívidas Estruturadas")
+        col1, col2, col3 = st.columns(3)
+        col1.metric(label="Volume Devedor Inicial", value=f"R$ {DIVIDA_TOTAL_INICIAL:,.2f}")
+        col2.metric(label="Total Amortizado (Pago)", value=f"R$ {total_pago_divida:,.2f}")
         
-    if DIVIDA_TOTAL_INICIAL > 0:
-        st.progress(min(total_pago_divida / DIVIDA_TOTAL_INICIAL, 1.0))
+        if saldo_devedor_restante > 0:
+            col3.metric(label="Falta Pagar (Saldo Real)", value=f"R$ {saldo_devedor_restante:,.2f}", delta="-Amortizando", delta_color="inverse")
+        else:
+            col3.metric(label="Saldo Devedor", value="R$ 0,00 🎉", delta="Quitado!")
+            
+        if DIVIDA_TOTAL_INICIAL > 0:
+            st.progress(min(total_pago_divida / DIVIDA_TOTAL_INICIAL, 1.0))
+        st.markdown("---")
     
-    st.markdown("---")
     st.write(f"🔴 **Gasto Essencial:** R$ {gastos_essencial:,.2f} de R$ {LIMITE_ESSENCIAL:,.2f}")
     st.progress(min(gastos_essencial / LIMITE_ESSENCIAL, 1.0) if LIMITE_ESSENCIAL > 0 else 0.0)
     st.write(f"🟡 **Estilo de Vida:** R$ {gastos_estilo:,.2f} de R$ {LIMITE_ESTILO_DE_VIDA:,.2f}")
@@ -333,7 +341,7 @@ with aba_painel:
     st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
-    # --- 🍩 GRÁFICO DONUT DE DISTRIBUIÇÃO ---
+    # --- 🍩 GRÁFICO DONUT ---
     try:
         df_Seguro = df_filtrado.copy() if not df_filtrado.empty else pd.DataFrame(columns=["grupo_orcamentario", "descricao", "satisfacao", "valor", "tipo"])
         df_Seguro["grupo_orcamentario"] = df_Seguro["grupo_orcamentario"].fillna("").astype(str)
@@ -349,53 +357,13 @@ with aba_painel:
         
         if not df_saidas.empty:
             st.markdown("---")
-            st.subheader("🍩 Distribuição Macro do seu Dinheiro")
+            st.subheader("🍩 Distribuição do Filtro Atual")
             df_pizza = df_saidas.groupby("grupo_orcamentario")["valor"].sum().reset_index()
-            fig_donut = px.pie(
-                df_pizza, values="valor", names="grupo_orcamentario", 
-                hole=0.4,
-                color_discrete_sequence=px.colors.qualitative.Safe
-            )
+            fig_donut = px.pie(df_pizza, values="valor", names="grupo_orcamentario", hole=0.4, color_discrete_sequence=px.colors.qualitative.Safe)
             fig_donut.update_layout(margin=dict(t=10, b=10, l=10, r=10))
             st.plotly_chart(fig_donut, use_container_width=True)
     except Exception:
         pass
-
-    # --- MOTOR DO GRÁFICO DE COMPORTAMENTO ---
-    try:
-        df_raiox_limpo = df_Seguro[
-            (~df_Seguro["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)) &
-            (~df_Seguro["grupo_orcamentario"].str.contains("⚙️ CONFIGURAÇÃO", na=False))
-        ].copy()
-        df_raiox_limpo = df_raiox_limpo[~df_raiox_limpo["descricao"].str.contains("Meta Criada", na=False)]
-        df_raiox_limpo = df_raiox_limpo[~df_raiox_limpo["descricao"].str.contains("\[CONFIG_PERFIL\]", na=False)]
-        
-        if not df_raiox_limpo.empty and "satisfacao" in df_raiox_limpo.columns:
-            st.markdown("---")
-            st.subheader(f"🧠 Raio-X de Necessidade Real ({janela_tempo})")
-            df_raiox_limpo["nivel_bruto"] = df_raiox_limpo["satisfacao"].str.strip().str[0]
-            df_necessidade = df_raiox_limpo.groupby("nivel_bruto")["valor"].sum().reset_index()
-            
-            mapa_nomes = {"1": "🚨 1 - Impulsivo / Evitável", "2": "🟡 2 - Útil / Desejável", "3": "🟢 3 - Indispensável"}
-            df_necessidade["Nível de Importância"] = df_necessidade["nivel_bruto"].map(mapa_nomes).fillna("🟡 2 - Útil / Desejável")
-            df_necessidade["Total Gasto (R$)"] = df_necessidade["valor"].astype(float)
-            
-            fig_necessidade = px.bar(
-                df_necessidade, y="Nível de Importância", x="Total Gasto (R$)", 
-                orientation='h', color="Nível de Importância",
-                color_discrete_map={
-                    "🚨 1 - Impulsivo / Evitável": "#FF4B4B", 
-                    "🟡 2 - Útil / Desejável": "#FFD700", 
-                    "🟢 3 - Indispensável": "#00FF66"
-                }
-            )
-            fig_necessidade.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig_necessidade, use_container_width=True)
-        else:
-            st.markdown("---")
-            st.info("💡 Nenhum gasto real efetuado neste período para gerar a análise comportamental.")
-    except Exception as erro_grafico:
-        st.warning(f"📊 O painel gráfico está sendo recalculado. Detalhe técnico: {erro_grafico}")
 
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação Realizada")
@@ -420,7 +388,7 @@ with aba_painel:
             tipo = st.radio("Direção do dinheiro:", ["Gasto ou Investimento (Saída)", "Faturamento ou Receita (Entrada)"], horizontal=True)
             
         data_movimento = st.date_input("Data do evento:", datetime.date.today())
-        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Ex: Mercado...")
+        descricao = st.text_input("Descrição ou Estabelecimento:", placeholder="Use #filho para rastrear dependentes...")
         satisfacao = st.select_slider("🧠 Nível de necessidade real?", options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"], value="2 - Útil / Desejável")
         botao_enviar = st.form_submit_button("Confirmar Lançamento Real")
         
@@ -445,7 +413,7 @@ with aba_painel:
 
     # --- 📋 GERENCIADOR DE LANÇAMENTOS SEGURO ---
     st.markdown("---")
-    st.subheader(f"📋 Gerenciar Lançamentos do Período ({janela_tempo})")
+    st.subheader("📋 Gerenciar Lançamentos do Período")
     
     if supabase and not df_todos_dados.empty:
         df_editor_limpo = df_filtrado.copy() if not df_filtrado.empty else pd.DataFrame()
@@ -481,14 +449,11 @@ with aba_painel:
                 except Exception as e:
                     st.error(f"Erro ao salvar alterações: {e}")
         else:
-            st.info("💡 Nenhum lançamento real realizado neste intervalo especificado.")
-    else:
-        st.info("💡 Nenhum lançamento real encontrado no banco de dados.")
+            st.info("💡 Nenhum lançamento real encontrado com os filtros atuais.")
 
 # ==================== ABA 2 ====================
 with aba_porquinhos:
     st.title("🐷 Meus Porquinhos")
-    st.caption("Evolução patrimonial trancada por criptografia e restrita à sua conta.")
     st.markdown("---")
     
     if dicionario_metas_alvo:
@@ -503,25 +468,18 @@ with aba_porquinhos:
             st.subheader(f"{nome_meta}")
             c1, c2, c3 = st.columns(3)
             c1.metric(label="Valor Alvo Final", value=f"R$ {valor_alvo:,.2f}")
-            c2.metric(label="Total Já Guardado", value=f"R$ {guardado:,.2f}", delta="+Patrimônio")
+            c2.metric(label="Total Já Guardado", value=f"R$ {guardado:,.2f}")
             c3.metric(label="Quanto Falta Alocar", value=f"R$ {falta_guardar:,.2f}")
             
             st.progress(min(guardado / valor_alvo, 1.0) if valor_alvo > 0 else 0.0)
-            st.markdown(f"**Preenchimento:** {(guardado / valor_alvo) * 100:.1f}%")
             st.markdown("---")
-            
-        st.subheader("📈 Dashboard Compartativo de Objetivos")
-        df_porquinhos_fig = pd.DataFrame(dados_metas_grafico)
-        fig_porquinhos = px.bar(df_porquinhos_fig, x="Meta", y="Valor", color="Estado", title="Raio-X de Evolução Patrimonial Combinada",
-                                color_discrete_map={"Guardado (R$)": "#00FF66", "Falta Pagar (R$)": "#444444"})
-        st.plotly_chart(fig_porquinhos, use_container_width=True)
     else:
         st.info("💡 Você ainda não criou nenhum porquinho.")
 
 # ==================== ABA 3 ====================
 with aba_agenda:
     st.title("📅 Agenda de Compromissos Financeiros")
-    st.caption("Mapeie seus boletos fixos e contas que tem a receber neste mês para não esquecer nada.")
+    st.caption("Mapeie seus boletos fixos e contas a receber.")
     st.markdown("---")
     
     col_agenda1, col_agenda2 = st.columns(2)
@@ -529,7 +487,7 @@ with aba_agenda:
     with col_agenda1:
         st.subheader("📌 Agendar Conta Fixa (A Pagar)")
         with st.form("form_agenda_pagar", clear_on_submit=True):
-            name_boleto = st.text_input("Nome da Conta / Boleto:", placeholder="Ex: Aluguel, Luz, Internet...")
+            name_boleto = st.text_input("Nome da Conta / Boleto:", placeholder="Ex: Conta de Luz...")
             valor_boleto = st.number_input("Valor Estimado (R$):", min_value=0.0, step=0.01, format="%.2f")
             vencimento_boleto = st.date_input("Data de Vencimento:", datetime.date.today())
             botao_agenda_pagar = st.form_submit_button("Agendar Conta Fixa")
@@ -549,7 +507,7 @@ with aba_agenda:
     with col_agenda2:
         st.subheader("💰 Agendar Valor (A Receber)")
         with st.form("form_agenda_receber", clear_on_submit=True):
-            nome_recebivel = st.text_input("O que tem a receber?:", placeholder="Ex: Venda da Moto...")
+            nome_recebivel = st.text_input("O que tem a receber?:", placeholder="Ex: Freelance...")
             valor_recebivel = st.number_input("Valor a Receber (R$):", min_value=0.0, step=0.01, format="%.2f")
             data_recebivel = st.date_input("Data de Expectativa:", datetime.date.today())
             botao_agenda_receber = st.form_submit_button("Agendar Recebimento")
@@ -569,14 +527,52 @@ with aba_agenda:
     st.markdown("---")
     st.subheader("📋 Seus Compromissos Mapeados no Período")
     
-    if not df_filtrado.empty:
-        df_agenda_filtrada = df_filtrado.copy()
-        df_agenda_filtrada["grupo_orcamentario"] = df_agenda_filtrada["grupo_orcamentario"].fillna("").astype(str)
-        df_agenda_filtrada = df_agenda_filtrada[df_agenda_filtrada["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)]
+    # Extração limpa e isolada sem interferência do filtro global de tags textuais da barra lateral
+    if supabase and not df_todos_dados.empty:
+        df_agenda_pura = df_todos_dados.copy()
+        df_agenda_pura["grupo_orcamentario"] = df_agenda_pura["grupo_orcamentario"].fillna("").astype(str)
+        df_agenda_pura["ano"] = pd.to_datetime(df_agenda_pura["data_dt"]).dt.year
+        df_agenda_pura["mes"] = pd.to_datetime(df_agenda_pura["data_dt"]).dt.month
         
-        if not df_agenda_filtrada.empty:
-            df_exibicao_agenda = df_agenda_filtrada[["data", "descricao", "valor", "tipo"]].copy()
-            df_exibicao_agenda.columns = ["Vencimento/Expectativa", "Compromisso", "Valor (R$)", "Fluxo"]
-            st.dataframe(df_exibicao_agenda, use_container_width=True, hide_index=True)
+        # Filtro temporal estrito do mês selecionado
+        df_agenda_pura = df_agenda_pura[(df_agenda_pura["ano"] == ano_selected) & (df_agenda_pura["mes"] == mes_selected_num)]
+        df_agenda_pura = df_agenda_pura[df_agenda_pura["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)]
+        
+        if not df_agenda_pura.empty:
+            for idx, row in df_agenda_pura.iterrows():
+                id_item = int(row["id"])
+                desc_pura = str(row["descricao"]).replace("[AGENDA COMPROMISSO] ", "")
+                valor_item = float(row["valor"])
+                grupo_item = str(row["grupo_orcamentario"])
+                tipo_item = str(row["tipo"])
+                data_venc = row["data"]
+                
+                # Interface por blocos de controle para liquidação instantânea
+                col_c1, col_c2, col_c3 = st.columns([3, 1, 1])
+                col_c1.write(f"📅 **{data_venc}** - {desc_pura} | **R$ {valor_item:,.2f}**")
+                
+                if "CONTAS A PAGAR" in grupo_item:
+                    col_c2.caption("🔴 A Pagar")
+                    if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
+                        # Motor de Baixa Automática: Deleta a agenda e lança na movimentação real
+                        supabase.table("movimentacoes").delete().eq("id", id_item).execute()
+                        supabase.table("movimentacoes").insert({
+                            "data": str(hoje), "valor": valor_item, "tipo": tipo_item,
+                            "descricao": f"{desc_pura} (Pago via Agenda)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)",
+                            "subcategoria": "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID
+                        }).execute()
+                        st.success(f"Baixa dada em: {desc_pura}!")
+                        st.rerun()
+                else:
+                    col_c2.caption("🟢 A Receber")
+                    if col_c3.button("💰 Receber", key=f"rec_{id_item}"):
+                        supabase.table("movimentacoes").delete().eq("id", id_item).execute()
+                        supabase.table("movimentacoes").insert({
+                            "data": str(hoje), "valor": valor_item, "tipo": tipo_item,
+                            "descricao": f"{desc_pura} (Recebido via Agenda)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)",
+                            "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
+                        }).execute()
+                        st.success(f"Valor recebido: {desc_pura}!")
+                        st.rerun()
         else:
-            st.info("💡 Nenhum boleto ou valor a receber agendado para o período selecionado.")
+            st.info("💡 Nenhum boleto ou valor a receber agendado para este mês.")
