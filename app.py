@@ -118,8 +118,12 @@ tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #
 
 # --- PROCESSAMENTO LÓGICO ---
 renda_base_usuario = 2500.00  
-saldo_bancario_inicial = 0.0  
 
+# Variáveis globais para cálculo do Saldo Real de Caixa
+global_entradas = 0.0
+global_saidas_caixa = 0.0
+
+# Variáveis mensais de orçamento
 faturamento_extra_mes = 0.0
 gastos_reais_mes = 0.0       
 saidas_imediatas_caixa = 0.0 
@@ -157,46 +161,45 @@ if supabase:
                 grupo = item.get("grupo_orcamentario") or ""
                 subcat = item.get("subcategoria") or ""
                 tipo_mov = item.get("tipo") or ""
-                val_mov = float(item["valor"])
+                val_mov = float(item["valor"] or 0.0)
                 desc = item.get("descricao") or ""
                 dt_item = pd.to_datetime(item["data"]).date()
                 
-                # Coleta de Parâmetros de Configuração do Perfil
-                if "[CONFIG_PERFIL]" in desc:
-                    if "Renda Base Nativa" in subcat:
-                        renda_base_usuario = val_mov
-                    elif "Saldo Conciliado Banco" in subcat:
-                        saldo_bancario_inicial = val_mov
+                if "[CONFIG_PERFIL]" in desc and "Renda Base Nativa" in subcat:
+                    renda_base_usuario = val_mov
                     continue
                 
-                # Mapeamento Global da Agenda do Mês Selecionado (Uso estrito de 'grupo')
-                if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
-                    if "📅 AGENDA: CONTAS A PAGAR" in grupo:
-                        agenda_a_pagar_mes += val_mov
-                        continue
-                    elif "📅 AGENDA: CONTAS A RECEBER" in grupo:
-                        agenda_a_receber_mes += val_mov
-                        continue
-                        
+                # Mapeamento do fluxo da Agenda (Isolado por mês de competência)
                 if "📅 AGENDA" in grupo:
+                    if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
+                        if "📅 AGENDA: CONTAS A PAGAR" in grupo:
+                            agenda_a_pagar_mes += val_mov
+                        elif "📅 AGENDA: CONTAS A RECEBER" in grupo:
+                            agenda_a_receber_mes += val_mov
                     continue
+                
+                # CONTABILIDADE DO SALDO REAL GLOBAL (Ignora parcelas de cartão que ainda não saíram da conta)
+                if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
+                    global_entradas += val_mov
+                elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "[AJUSTE]" in desc:
+                    global_saidas_caixa += val_mov
+
+                # Métricas auxiliares fixas
                 if "🚀 20% Aporte" in grupo and "Entrada" in tipo_mov:
                     dicionario_metas_alvo[subcat] = val_mov
-                    continue
-                if "📋 Quitação de Dívidas" in grupo:
+                elif "📋 Quitação de Dívidas" in grupo:
                     if "Entrada" in tipo_mov:
                         DIVIDA_TOTAL_INICIAL += val_mov
                     else:
                         total_pago_divida += val_mov
-                if "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
+                elif "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
-            # Filtragem Temporal Geral Seguro
+            # Filtragem Temporal Geral Seguro para os Gráficos e Tabelas
             df_filtrado = df_todos_dados.copy()
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
             
-            # --- MOTOR DO CARTÃO DE CRÉDITO ---
             def calcular_mes_fatura(linha):
                 dt = linha["data_dt"]
                 tipo_pgto = str(linha.get("tipo") or "")
@@ -212,13 +215,11 @@ if supabase:
                     lambda r: pd.Series(calcular_mes_fatura(r)), axis=1
                 )
                 
-                # Regra de Competência do Mês Comercial
                 df_filtrado = df_filtrado[
                     ((df_filtrado["tipo"].str.contains("💳|Cartão", na=False)) & (df_filtrado["ano_fatura"] == ano_selected) & (df_filtrado["mes_fatura"] == mes_selected_num)) |
                     ((~df_filtrado["tipo"].str.contains("💳|Cartão", na=False)) & (df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num))
                 ]
 
-            # Preservar o acumulado do mês cheio para o cálculo orçamentário
             df_acumulado_mes_cheio = df_filtrado.copy()
 
             if janela_tempo == "Últimos 7 Dias":
@@ -230,7 +231,7 @@ if supabase:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
                 df_filtrado = df_filtrado[df_filtrado["descricao_lower"].str.contains(tag_busca, na=False)]
                 
-            # Consolidação das Métricas Focadas no Mês Comercial Cheio
+            # Consolidação Orçamentária Mensal
             for _, row in df_acumulado_mes_cheio.iterrows():
                 val = float(row["valor"])
                 grupo = str(row["grupo_orcamentario"] or "")
@@ -265,25 +266,36 @@ if supabase:
         else:
             st.error(f"Erro na validação de dados: {e}")
 
-# ==================== CONFIGURAÇÃO LATERAL DE PERFIL & CONCILIAÇÃO ====================
+# ==================== CONTROLE REAL DE CONCILIAÇÃO BANCÁRIA ====================
+saldo_real_exibido = global_entradas - global_saidas_caixa
+saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
+
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Sincronização de Saldos")
 
-novo_saldo_banco = st.sidebar.number_input("Saldo Real do seu Banco Hoje (R$):", min_value=-99999.0, value=saldo_bancario_inicial, step=10.0, format="%.2f")
+# Input padrão exibe o saldo calculado em tempo real
+novo_saldo_banco = st.sidebar.number_input("Saldo Real do seu Banco Hoje (R$):", min_value=-99999.0, value=saldo_real_exibido, step=10.0, format="%.2f")
 
-if st.sidebar.button("🔄 Conciliar Saldo Bancário"):
-    try:
-        if not df_todos_dados.empty:
-            supabase.table("movimentacoes").delete().eq("subcategoria", "Saldo Conciliado Banco").eq("user_id", USER_ID).execute()
-        supabase.table("movimentacoes").insert({
-            "data": str(hoje), "valor": float(novo_saldo_banco), "tipo": "Faturamento ou Receita (Entrada)",
-            "descricao": "[CONFIG_PERFIL] Saldo Inicial", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
-            "subcategoria": "Saldo Conciliado Banco", "satisfacao": "3 - Indispensável", "user_id": USER_ID
-        }).execute()
-        st.sidebar.success("Saldo Bancário Conciliado!")
-        st.rerun()
-    except Exception as e:
-        st.sidebar.error(f"Erro ao conciliar: {e}")
+if st.sidebar.button("🔄 Conciliar com o Banco"):
+    discrepancia = novo_saldo_banco - saldo_real_exibido
+    if discrepancia != 0:
+        try:
+            if discrepancia > 0:
+                tipo_ajuste = "Faturamento ou Receita (Entrada)"
+                grupo_ajuste = "⚙️ CONFIGURAÇÃO"
+            else:
+                tipo_ajuste = "📱 Saída Dinheiro / Pix (Débito)"
+                grupo_ajuste = "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)"
+            
+            supabase.table("movimentacoes").insert({
+                "data": str(hoje), "valor": float(abs(discrepancia)), "tipo": tipo_ajuste,
+                "descricao": "[AJUSTE] Alinhamento de Saldo Real", "grupo_orcamentario": grupo_ajuste,
+                "subcategoria": "Ajuste de Saldo", "satisfacao": "3 - Indispensável", "user_id": USER_ID
+            }).execute()
+            st.sidebar.success("🎉 Ledger equilibrado com sucesso!")
+            st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"Erro ao ajustar saldo: {e}")
 
 nova_renda_input = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=renda_base_usuario, step=50.0, format="%.2f")
 if st.sidebar.button("💾 Salvar Renda Base"):
@@ -300,14 +312,9 @@ if st.sidebar.button("💾 Salvar Renda Base"):
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
 
-# --- PARÂMETROS DE CÁLCULO ---
 LIMITE_ESSENCIAL = renda_base_usuario * 0.50       
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
 META_APORTE_MENSAL = renda_base_usuario * 0.20           
-
-# Saldo Atual Incremental = Saldo Inicial do Banco + Faturamentos do Mês - Saídas Reais (Pix/Débito)
-saldo_real_exibido = saldo_bancario_inicial + faturamento_extra_mes - saidas_imediatas_caixa
-saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
 if not lista_porquinhos_existentes:
@@ -329,7 +336,7 @@ with aba_painel:
     
     st.markdown(f"### 👑 Movimentação de Caixa Real ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="💰 Saldo Calculado em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Saldo Inicial informado + Entradas registradas - Saídas no Pix/Débito.")
+    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Histórico real consolidado de entradas e saídas de caixa da conta corrente.")
     c_caixa2.metric(label="💳 Cartão (A Vencer)", value=f"R$ {fatura_acumulada_mes:,.2f}", help="Total acumulado em compras no crédito com vencimento neste mês.")
     c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}", help="Soma de tudo o que foi consumido no período (Débito + Crédito)")
 
