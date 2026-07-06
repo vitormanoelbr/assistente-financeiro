@@ -64,7 +64,7 @@ if st.session_state["usuario_logado"] is None:
     with aba_cadastro:
         with st.form("form_cadastro"):
             email_cad = st.text_input("Escolha um E-mail:", placeholder="seu@email.com")
-            senha_cad = st.text_input("Escolha um Senha (mínimo 6 caracteres):", type="password", placeholder="******")
+            senha_cad = st.text_input("Escolha uma Senha (mínimo 6 caracteres):", type="password", placeholder="******")
             botao_cad = st.form_submit_button("Cadastrar e Criar Plataforma")
             
             if botao_cad:
@@ -191,14 +191,14 @@ if supabase:
             
             # --- MOTOR DO CARTÃO DE CRÉDITO ---
             def calcular_mes_fatura(linha):
-                dt = linha["data_dt"]
+                dt = linea_dt := linha["data_dt"]
                 tipo_pgto = str(linha.get("tipo") or "")
                 if "💳" in tipo_pgto or "Cartão" in tipo_pgto:
-                    if dt.day > 20:
-                        proximo_mes = dt.month + 1 if dt.month < 12 else 1
-                        proximo_ano = dt.year if dt.month < 12 else dt.year + 1
+                    if linea_dt.day > 20:
+                        proximo_mes = linea_dt.month + 1 if linea_dt.month < 12 else 1
+                        proximo_ano = linea_dt.year if linea_dt.month < 12 else linea_dt.year + 1
                         return proximo_ano, proximo_mes
-                return dt.year, dt.month
+                return linea_dt.year, linea_dt.month
 
             if not df_filtrado.empty:
                 df_filtrado[["ano_fatura", "mes_fatura"]] = df_filtrado.apply(
@@ -277,13 +277,10 @@ LIMITE_ESSENCIAL = renda_base_usuario * 0.50
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
 META_APORTE_MENSAL = renda_base_usuario * 0.20           
 
-# Regra de cálculo Factual
+# Regra de cálculo Factual do Extrato Real (Sem misturar previsões)
 entradas_reais = faturamento_extra_mes if faturamento_extra_mes > 0 else renda_base_usuario
-saldo_real_hoje = entradas_reais - saidas_imediatas_caixa
+saldo_real_hoje = entries := entradas_reais - saidas_imediatas_caixa
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
-
-# Previsão Matemática para o fim do mês
-saldo_livre_projetado = (saldo_real_hoje + agenda_a_receber_mes) - agenda_a_pagar_mes - fatura_acumulada_mes
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
 if not lista_porquinhos_existentes:
@@ -303,21 +300,12 @@ aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", 
 with aba_painel:
     st.title("📲 Meu Planner Financeiro")
     
-    st.markdown(f"### 👑 Saúde Factual do Caixa ({lista_meses[mes_selected_num]})")
+    # Visual Limpo Padrão de Mercado (Fatos Puros)
+    st.markdown(f"### 👑 Movimentação de Caixa Real ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="💰 Dinheiro em Conta (Saldo Vivo)", value=f"R$ {saldo_real_hoje:,.2f}", help="Dinheiro líquido disponível hoje (Entradas reais menos Pix/Débitos efetuados)")
-    c_caixa2.metric(label="💳 Fatura Atual do Cartão", value=f"R$ {fatura_acumulada_mes:,.2f}", help="Total acumulado em compras no crédito com vencimento neste mês")
-    c_caixa3.metric(label="📉 Total Gasto no Mês", value=f"R$ {gastos_reais_mes:,.2f}", help="Soma de tudo o que foi consumido (Débito + Crédito)")
-
-    st.markdown("### 🔮 Projeção de Caixa (Até o Fim do Mês)")
-    col_p1, col_p2, col_p3 = st.columns(3)
-    col_p1.metric(label="📉 Contas Fixas a Vencer", value=f"R$ {agenda_a_pagar_mes:,.2f}")
-    col_p2.metric(label="📈 Ganhos Agendados", value=f"R$ {agenda_a_receber_mes:,.2f}")
-    
-    if saldo_livre_projetado >= 0:
-        col_p3.metric(label="🚀 Sobra Livre Estimada", value=f"R$ {saldo_livre_projetado:,.2f}", delta="Cenário Seguro")
-    else:
-        col_p3.metric(label="⚠️ Rombo Estimado (Aviso)", value=f"R$ {saldo_livre_projetado:,.2f}", delta="Ajuste os seus gastos!", delta_color="inverse")
+    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_hoje:,.2f}", help="Dinheiro líquido disponível hoje (Entradas reais menos Pix/Débitos efetuados)")
+    c_caixa2.metric(label="💳 Cartão (A Vencer)", value=f"R$ {fatura_acumulada_mes:,.2f}", help="Total acumulado em compras no crédito com vencimento neste mês")
+    c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}", help="Soma de tudo o que foi gasto (Débito + Crédito)")
 
     st.markdown("---")
     st.subheader("📊 Painel de Limites Orçamentários (Soma total de Pix + Crédito)")
@@ -520,9 +508,23 @@ with aba_porquinhos:
             st.progress(min((total_patrimonio_guardado / alvo_valor), 1.0))
         st.markdown("---")
 
-# ==================== ABA 3 (AGENDA) ====================
+# ==================== ABA 3 (AGENDA / ONDE ESTÁ A PREVISÃO REAL) ====================
 with aba_agenda:
     st.title("📅 Agenda de Compromissos Financeiros")
+    
+    # Nova Seção de Resumo da Agenda para dar previsibilidade limpa no local correto
+    st.markdown("### 📊 Balanço Futuro Projetado do Mês")
+    col_ag1, col_ag2, col_ag3 = st.columns(3)
+    col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pagar_mes:,.2f}")
+    col_ag2.metric(label="🟢 Recebimentos Agendados", value=f"R$ {agenda_a_receber_mes:,.2f}")
+    
+    balanco_agenda = agenda_a_receber_mes - agenda_a_pagar_mes
+    if balanco_agenda >= 0:
+        col_ag3.metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Superávit de Compromissos")
+    else:
+        col_ag3.metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Déficit de Compromissos", delta_color="inverse")
+    
+    st.markdown("---")
     col_agenda1, col_agenda2 = st.columns(2)
     with col_agenda1:
         st.subheader("📌 Agendar Conta Fixa (A Pagar)")
