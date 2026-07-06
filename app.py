@@ -23,6 +23,17 @@ try:
 except Exception as e:
     st.error(f"Falha na conexão estrutural: {e}")
 
+# --- FUNÇÃO AUXILIAR DE LOGOUT COMPLETO ---
+def deslogar_usuario():
+    try:
+        supabase.auth.sign_out()
+    except:
+        pass
+    st.session_state["usuario_logado"] = None
+    st.session_state["user_token"] = None
+    st.query_params.clear()
+    st.rerun()
+
 # --- 👤 GERENCIAMENTO NATIVO DE SESSÃO POR URL ---
 if "usuario_logado" not in st.session_state or st.session_state["usuario_logado"] is None:
     parametros_url = st.query_params
@@ -80,16 +91,6 @@ if st.session_state["usuario_logado"] is None:
 
 # ==================== SISTEMA PRINCIPAL ====================
 USER_ID = st.session_state["usuario_logado"]
-
-def deslogar_usuario():
-    try:
-        supabase.auth.sign_out()
-    except:
-        pass
-    st.session_state["usuario_logado"] = None
-    st.session_state["user_token"] = None
-    st.query_params.clear()
-    st.rerun()
 
 if st.sidebar.button("🚪 Sair da Conta"):
     deslogar_usuario()
@@ -252,7 +253,12 @@ if supabase:
                         gastos_negocio += val
                     
     except Exception as e:
-        st.error(f"Erro na validação: {e}")
+        # Se o token expirou (JWT expired), desloga de forma automatizada para renovar a sessão limpa
+        if "JWT expired" in str(e) or "PGRST303" in str(e):
+            st.warning("🔒 Sua sessão expirou por segurança. Fazendo login automático de renovação...")
+            deslogar_usuario()
+        else:
+            st.error(f"Erro na validação dos dados: {e}")
 
 # Configurações Sidebar
 st.sidebar.markdown("---")
@@ -268,7 +274,7 @@ if st.sidebar.button("💾 Salvar Renda Base"):
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
             "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
         }).execute()
-        st.sidebar.success("Renda atualizada!")
+        st.sidebar.success("Renda updated!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
@@ -451,7 +457,7 @@ with aba_painel:
             try:
                 linhas_atuais_ids = set(dados_editados["ID"].tolist())
                 linhas_originais_ids = set(df_editor["ID"].tolist())
-                for id_del in (linhas_originais_ids - linhas_atuais_ids):
+                for id_del in (linhas_originais_ids - lines_atuais_ids):
                     supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
                 for _, row in dados_editados.iterrows():
                     row_id = int(row["ID"])
@@ -508,11 +514,10 @@ with aba_porquinhos:
             st.progress(min((total_patrimonio_guardado / alvo_valor), 1.0))
         st.markdown("---")
 
-# ==================== ABA 3 (AGENDA / ONDE ESTÁ A PREVISÃO REAL) ====================
+# ==================== ABA 3 (AGENDA) ====================
 with aba_agenda:
     st.title("📅 Agenda de Compromissos Financeiros")
     
-    # Nova Seção de Resumo da Agenda para dar previsibilidade limpa no local correto
     st.markdown("### 📊 Balanço Futuro Projetado do Mês")
     col_ag1, col_ag2, col_ag3 = st.columns(3)
     col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pagar_mes:,.2f}")
