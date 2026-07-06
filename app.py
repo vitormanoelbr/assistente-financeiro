@@ -162,7 +162,7 @@ if supabase:
                     renda_base_usuario = val_mov
                     continue
                 
-                # Mapeamento Global da Agenda do Mês Selecionado (Independente de filtros laterais)
+                # Mapeamento Global da Agenda do Mês Selecionado (Independente de filtros temporais curtos)
                 if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
                     if "📅 AGENDA: CONTAS A PAGAR" in grupo:
                         agenda_a_pagar_mes += val_mov
@@ -189,7 +189,7 @@ if supabase:
             df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
             df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
             
-            # --- CORREÇÃO DO MOTOR DO CARTÃO ---
+            # --- MOTOR DO CARTÃO DE CRÉDITO ---
             def calcular_mes_fatura(linha):
                 dt = linha["data_dt"]
                 tipo_pgto = str(linha.get("tipo") or "")
@@ -205,23 +205,26 @@ if supabase:
                     lambda r: pd.Series(calcular_mes_fatura(r)), axis=1
                 )
                 
-                # Separação flexível de despesas comuns e faturas de cartão
+                # Regra de Competência do Mês Comercial
                 df_filtrado = df_filtrado[
                     ((df_filtrado["tipo"].str.contains("💳|Cartão", na=False)) & (df_filtrado["ano_fatura"] == ano_selected) & (df_filtrado["mes_fatura"] == mes_selected_num)) |
                     ((~df_filtrado["tipo"].str.contains("💳|Cartão", na=False)) & (df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num))
                 ]
 
-            if janela_tempo == "Últimos 7 Dias":
+            # Preservar o acumulado do mês cheio para o cálculo do Saldo Real antes dos sub-filtros laterais
+            df_acumulado_mes_cheio = df_filtrado.copy()
+
+            if jendela_tempo == "Últimos 7 Dias":
                 df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
-            elif janela_tempo == "Somente Hoje":
+            elif jendela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
             
             if tag_busca:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
                 df_filtrado = df_filtrado[df_filtrado["descricao_lower"].str.contains(tag_busca, na=False)]
                 
-            # Consolidação robusta de saídas reais
-            for _, row in df_filtrado.iterrows():
+            # Consolidação das Métricas Focadas no Mês Comercial Cheio (Garante precisão do Saldo)
+            for _, row in df_acumulado_mes_cheio.iterrows():
                 val = float(row["valor"])
                 grupo = str(row["grupo_orcamentario"] or "")
                 tipo_mov = str(row.get("tipo") or "")
@@ -265,7 +268,7 @@ if st.sidebar.button("💾 Salvar Renda Base"):
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
             "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
         }).execute()
-        st.sidebar.success("Renda updated!")
+        st.sidebar.success("Renda atualizada!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
@@ -274,12 +277,14 @@ LIMITE_ESSENCIAL = renda_base_usuario * 0.50
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
 META_APORTE_MENSAL = renda_base_usuario * 0.20           
 
-receitas_totais_calculadas = renda_base_usuario + faturamento_extra_mes if not tag_busca else faturamento_extra_mes
-saldo_disponivel_caixa = receitas_totais_calculadas - saidas_imediatas_caixa
+# --- RESTRUTURAÇÃO DO CÁLCULO VISUAL (CAMINHO 1) ---
+# Se o usuário lançou receitas no mês, usamos elas como base real. Caso contrário, assume a renda base fixa.
+entradas_reais = faturamento_extra_mes if faturamento_extra_mes > 0 else renda_base_usuario
+saldo_real_hoje = entradas_reais - saidas_imediatas_caixa
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
-# --- CÁLCULO DE PREVISIBILIDADE ---
-saldo_livre_projetado = (saldo_disponivel_caixa + agenda_a_receber_mes) - agenda_a_pagar_mes - fatura_acumulada_mes
+# Previsão Matemática Realista para o fim do mês
+saldo_livre_projetado = (saldo_real_hoje + agenda_a_receber_mes) - agenda_a_pagar_mes - fatura_acumulada_mes
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
 if not lista_porquinhos_existentes:
@@ -299,21 +304,23 @@ aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", 
 with aba_painel:
     st.title("📲 Meu Planner Financeiro")
     
-    st.markdown(f"### 👑 Saúde Disponível do Caixa ({lista_meses[mes_selected_num]})")
+    # Mudança Estratégica de UX: Fatos em Primeiro Lugar
+    st.markdown(f"### 👑 Saúde Factual do Caixa ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="Conta Corrente (Saldo Vivo)", value=f"R$ {saldo_disponivel_caixa:,.2f}")
-    c_caixa2.metric(label="🔮 Fatura Estimada Cartão", value=f"R$ {fatura_acumulada_mes:,.2f}")
-    c_caixa3.metric(label="Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}")
+    c_caixa1.metric(label="💰 Dinheiro em Conta (Saldo Vivo)", value=f"R$ {saldo_real_hoje:,.2f}", help="Dinheiro líquido disponível hoje (Entradas reais menos Pix/Débitos efetuados)")
+    c_caixa2.metric(label="💳 Fatura Atual do Cartão", value=f"R$ {fatura_acumulada_mes:,.2f}", help="Total acumulado em compras no crédito com vencimento neste mês")
+    c_caixa3.metric(label="📉 Total Gasto no Mês", value=f"R$ {gastos_reais_mes:,.2f}", help="Soma de tudo o que foi consumido (Débito + Crédito)")
 
-    st.markdown("### 🔮 Simulador de Previsibilidade do Mês")
+    # Seção Inteligente de Projeção (Transparência total)
+    st.markdown("### 🔮 Projeção de Caixa (Até o Fim do Mês)")
     col_p1, col_p2, col_p3 = st.columns(3)
-    col_p1.metric(label="📉 Contas Fixas Agendadas", value=f"R$ {agenda_a_pagar_mes:,.2f}")
-    col_p2.metric(label="📈 Valores a Receber", value=f"R$ {agenda_a_receber_mes:,.2f}")
+    col_p1.metric(label="📉 Contas Fixas a Vencer", value=f"R$ {agenda_a_pagar_mes:,.2f}")
+    col_p2.metric(label="📈 Ganhos Agendados", value=f"R$ {agenda_a_receber_mes:,.2f}")
     
     if saldo_livre_projetado >= 0:
-        col_p3.metric(label="🔥 Saldo Livre Real Estimado", value=f"R$ {saldo_livre_projetado:,.2f}", delta="Cenário Seguro")
+        col_p3.metric(label="🚀 Sobra Livre Estimada", value=f"R$ {saldo_livre_projetado:,.2f}", delta="Cenário Seguro")
     else:
-        col_p3.metric(label="🔥 Saldo Livre Real Estimado", value=f"R$ {saldo_livre_projetado:,.2f}", delta="Alerta: Caixa Negativo", delta_color="inverse")
+        col_p3.metric(label="⚠️ Rombo Estimado (Aviso)", value=f"R$ {saldo_livre_projetado:,.2f}", delta="Ajuste os seus gastos!", delta_color="inverse")
 
     st.markdown("---")
     st.subheader("📊 Painel de Limites Orçamentários (Soma total de Pix + Crédito)")
@@ -330,7 +337,7 @@ with aba_painel:
         df_saidas = df_filtrado[df_filtrado["tipo"].str.contains("Saída|📱|💳", na=False)].copy()
         if not df_saidas.empty:
             st.markdown("---")
-            st.subheader("🍩 Distribuição do Filtro Atual")
+            st.subheader("🍩 Distribuição das Despesas Reais")
             df_pizza = df_saidas.groupby("grupo_orcamentario")["valor"].sum().reset_index()
             fig_donut = px.pie(df_pizza, values="valor", names="grupo_orcamentario", hole=0.4, color_discrete_sequence=px.colors.qualitative.Safe)
             fig_donut.update_layout(margin=dict(t=10, b=10, l=10, r=10))
