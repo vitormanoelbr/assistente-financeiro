@@ -118,6 +118,8 @@ tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #
 
 # --- PROCESSAMENTO LÓGICO ---
 renda_base_usuario = 2500.00  
+saldo_bancario_inicial = 0.0  # Ponto de partida padrão de conciliação
+
 faturamento_extra_mes = 0.0
 gastos_reais_mes = 0.0       
 saidas_imediatas_caixa = 0.0 
@@ -159,8 +161,12 @@ if supabase:
                 desc = item.get("descricao") or ""
                 dt_item = pd.to_datetime(item["data"]).date()
                 
-                if "[CONFIG_PERFIL]" in desc and "Renda Base Nativa" in subcat:
-                    renda_base_usuario = val_mov
+                # Coleta de Parâmetros de Configuração do Perfil
+                if "[CONFIG_PERFIL]" in desc:
+                    if "Renda Base Nativa" in subcat:
+                        renda_base_usuario = val_mov
+                    elif "Saldo Conciliado Banco" in subcat:
+                        saldo_bancario_inicial = val_mov
                     continue
                 
                 # Mapeamento Global da Agenda do Mês Selecionado
@@ -212,7 +218,7 @@ if supabase:
                     ((~df_filtrado["tipo"].str.contains("💳|Cartão", na=False)) & (df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num))
                 ]
 
-            # Preservar o acumulado do mês cheio para o cálculo do Saldo Real
+            # Preservar o acumulado do mês cheio para o cálculo orçamentário
             df_acumulado_mes_cheio = df_filtrado.copy()
 
             if janela_tempo == "Últimos 7 Dias":
@@ -253,18 +259,34 @@ if supabase:
                         gastos_negocio += val
                     
     except Exception as e:
-        # Se o token expirou (JWT expired), desloga de forma automatizada para renovar a sessão limpa
         if "JWT expired" in str(e) or "PGRST303" in str(e):
-            st.warning("🔒 Sua sessão expirou por segurança. Fazendo login automático de renovação...")
+            st.warning("🔒 Sua sessão expirou por segurança. Reiniciando conexões de login...")
             deslogar_usuario()
         else:
-            st.error(f"Erro na validação dos dados: {e}")
+            st.error(f"Erro na validação de dados: {e}")
 
-# Configurações Sidebar
+# ==================== CONFIGURAÇÃO LATERAL DE PERFIL & CONCILIAÇÃO ====================
 st.sidebar.markdown("---")
-st.sidebar.header("⚙️ Configurações do Perfil")
-nova_renda_input = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=renda_base_usuario, step=50.0, format="%.2f")
+st.sidebar.header("⚙️ Sincronização de Saldos")
 
+# Campo Mágico: Aqui o usuário crava a verdade real do extrato bancário
+novo_saldo_banco = st.sidebar.number_input("Saldo Real do seu Banco Hoje (R$):", min_value=-99999.0, value=saldo_bancario_inicial, step=10.0, format="%.2f", help="Digite exatamente o valor que aparece na tela do app do seu banco agora.")
+
+if st.sidebar.button("🔄 Conciliar Saldo Bancário"):
+    try:
+        if not df_todos_dados.empty:
+            supabase.table("movimentacoes").delete().eq("descricao", "[CONFIG_PERFIL] Saldo Inicial").eq("user_id", USER_ID).execute()
+        supabase.table("movimentacoes").insert({
+            "data": str(hoje), "valor": float(novo_saldo_banco), "tipo": "Faturamento ou Receita (Entrada)",
+            "descricao": "[CONFIG_PERFIL] Saldo Inicial", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
+            "subcategoria": "Saldo Conciliado Banco", "satisfacao": "3 - Indispensável", "user_id": USER_ID
+        }).execute()
+        st.sidebar.success("Saldo Bancário Conciliado!")
+        st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Erro ao conciliar: {e}")
+
+nova_renda_input = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=renda_base_usuario, step=50.0, format="%.2f")
 if st.sidebar.button("💾 Salvar Renda Base"):
     try:
         if not df_todos_dados.empty:
@@ -274,7 +296,7 @@ if st.sidebar.button("💾 Salvar Renda Base"):
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
             "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
         }).execute()
-        st.sidebar.success("Renda updated!")
+        st.sidebar.success("Renda salva!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
@@ -283,9 +305,9 @@ LIMITE_ESSENCIAL = renda_base_usuario * 0.50
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
 META_APORTE_MENSAL = renda_base_usuario * 0.20           
 
-# Regra de cálculo Factual do Extrato Real (Sem misturar previsões)
-entradas_reais = faturamento_extra_mes if faturamento_extra_mes > 0 else renda_base_usuario
-saldo_real_hoje = entradas_reais - saidas_imediatas_caixa
+# --- 🚀 REGRA DE CONCILIAÇÃO ESCALÁVEL ---
+# O saldo exibido passa a ser RIGOROSAMENTE o ponto fixo informado pelo usuário
+saldo_real_exibido = saldo_bancario_inicial
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
@@ -306,12 +328,12 @@ aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", 
 with aba_painel:
     st.title("📲 Meu Planner Financeiro")
     
-    # Visual Limpo Padrão de Mercado (Fatos Puros)
+    # Painel de Controle 100% Honesto (Fatos Puros)
     st.markdown(f"### 👑 Movimentação de Caixa Real ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_hoje:,.2f}", help="Dinheiro líquido disponível hoje (Entradas reais menos Pix/Débitos efetuados)")
-    c_caixa2.metric(label="💳 Cartão (A Vencer)", value=f"R$ {fatura_acumulada_mes:,.2f}", help="Total acumulado em compras no crédito com vencimento neste mês")
-    c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}", help="Soma de tudo o que foi gasto (Débito + Crédito)")
+    c_caixa1.metric(label="💰 Saldo Conciliado em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="O saldo real informado por você na barra lateral.")
+    c_caixa2.metric(label="💳 Cartão (A Vencer)", value=f"R$ {fatura_acumulada_mes:,.2f}", help="Total acumulado em compras no crédito com vencimento neste mês.")
+    c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}", help="Soma de tudo o que foi consumido no período (Débito + Crédito)")
 
     st.markdown("---")
     st.subheader("📊 Painel de Limites Orçamentários (Soma total de Pix + Crédito)")
@@ -457,11 +479,11 @@ with aba_painel:
             try:
                 linhas_atuais_ids = set(dados_editados["ID"].tolist())
                 linhas_originais_ids = set(df_editor["ID"].tolist())
-                for id_del in (linhas_originais_ids - lines_atuais_ids):
+                for id_del in (linhas_originais_ids - linhas_atuais_ids):
                     supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
                 for _, row in dados_editados.iterrows():
                     row_id = int(row["ID"])
-                    supabase.table("movimentacoes").update({"descricao": row["Descrição"], "valor": float(row["Valor (R$)"]), "tipo": row["Meio / Tipo"]}).eq("id", row_id).execute()
+                    supabase.table("movimentacoes").update({"descricao": row["Descrição"], "valor": float(row["Valor (R$)"]), "tipo": row["Meio / Tipo"]}).eq("id", row_id).eq("user_id", USER_ID).execute()
                 st.success("🔄 Alterações sincronizadas!")
                 st.rerun()
             except Exception as e:
@@ -514,11 +536,12 @@ with aba_porquinhos:
             st.progress(min((total_patrimonio_guardado / alvo_valor), 1.0))
         st.markdown("---")
 
-# ==================== ABA 3 (AGENDA) ====================
+# ==================== ABA 3 (AGENDA / PREVISIBILIDADE STRATEGICA) ====================
 with aba_agenda:
     st.title("📅 Agenda de Compromissos Financeiros")
     
-    st.markdown("### 📊 Balanço Futuro Projetado do Mês")
+    # Previsibilidade isolada no local adequado da jornada
+    st.markdown("### 📊 Fluxo de Caixa Projetado da Agenda")
     col_ag1, col_ag2, col_ag3 = st.columns(3)
     col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pagar_mes:,.2f}")
     col_ag2.metric(label="🟢 Recebimentos Agendados", value=f"R$ {agenda_a_receber_mes:,.2f}")
