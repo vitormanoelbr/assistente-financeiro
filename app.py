@@ -167,7 +167,7 @@ if supabase:
                     renda_base_usuario = val_mov
                     continue
                 
-                if "📅 AGENDA" in grupo:
+                if "📅 AGENDA" in group := grupo:
                     if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
                         if "📅 AGENDA: CONTAS A PAGAR" in grupo:
                             agenda_a_pagar_mes += val_mov
@@ -219,7 +219,7 @@ if supabase:
 
             df_acumulado_mes_cheio = df_filtrado.copy()
 
-            if janela_tempo == "Últimos 7 Days" or janela_tempo == "Últimos 7 Dias":
+            if janela_tempo == "Últimos 7 Dias":
                 df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
@@ -248,7 +248,7 @@ if supabase:
                         gastos_estilo += val
                     elif "20% Aporte" in grupo_item:
                         gastos_aporte_mes += val
-                    elif "💼 Custos de Negócio" in group_item := grupo_item:
+                    elif "💼 Custos de Negócio" in grupo_item:
                         gastos_negocio += val
                     
     except Exception as e:
@@ -280,7 +280,7 @@ if st.sidebar.button("🔄 Conciliar com o Banco"):
             
             supabase.table("movimentacoes").insert({
                 "data": str(hoje), "valor": float(abs(discrepancia)), "tipo": tipo_ajuste,
-                "descricao": "[AJUSTE] Alinhamento de Saldo Real", "grupo_orcamentario": grupo_ajuste,
+                "descricao": "[AJUSTE] Alinhamento de Saldo Real", "grupo_orcamentario": group_ajuste := grupo_ajuste,
                 "subcategoria": "Ajuste de Saldo", "satisfacao": "3 - Indispensável", "user_id": USER_ID
             }).execute()
             st.sidebar.success("🎉 Ledger equilibrado com sucesso!")
@@ -298,7 +298,7 @@ if st.sidebar.button("💾 Salvar Renda Base"):
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
             "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
         }).execute()
-        st.success("Renda salva!")
+        st.sidebar.success("Renda salva!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
