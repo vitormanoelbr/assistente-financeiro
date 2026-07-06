@@ -156,10 +156,21 @@ if supabase:
                 tipo_mov = item.get("tipo") or ""
                 val_mov = float(item["valor"])
                 desc = item.get("descricao") or ""
+                dt_item = pd.to_datetime(item["data"]).date()
                 
                 if "[CONFIG_PERFIL]" in desc and "Renda Base Nativa" in subcat:
                     renda_base_usuario = val_mov
                     continue
+                
+                # Mapeamento Global da Agenda do Mês Selecionado (Independente de filtros laterais)
+                if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
+                    if "📅 AGENDA: CONTAS A PAGAR" in grupo:
+                        agenda_a_pagar_mes += val_mov
+                        continue
+                    elif "📅 AGENDA: CONTAS A RECEBER" in grupo:
+                        agenda_a_receber_mes += val_mov
+                        continue
+                        
                 if "📅 AGENDA" in grupo:
                     continue
                 if "🚀 20% Aporte" in grupo and "Entrada" in tipo_mov:
@@ -216,15 +227,7 @@ if supabase:
                 tipo_mov = str(row.get("tipo") or "")
                 desc = str(row["descricao"] or "")
                 
-                if "[CONFIG_PERFIL]" in desc:
-                    continue
-                if "📅 AGENDA: CONTAS A PAGAR" in grupo:
-                    agenda_a_pagar_mes += val
-                    continue
-                elif "📅 AGENDA: CONTAS A RECEBER" in grupo:
-                    agenda_a_receber_mes += val
-                    continue
-                if "🚀 20% Aporte" in grupo and "Entrada" in tipo_mov:
+                if "[CONFIG_PERFIL]" in desc or "📅 AGENDA" in grupo:
                     continue
                 
                 if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
@@ -275,6 +278,9 @@ receitas_totais_calculadas = renda_base_usuario + faturamento_extra_mes if not t
 saldo_disponivel_caixa = receitas_totais_calculadas - saidas_imediatas_caixa
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
+# --- 🎯 NOVO CÁLCULO DE PREVISIBILIDADE (FLUXO DE CAIXA FUTURO) ---
+saldo_livre_projetado = (saldo_disponivel_caixa + agenda_a_receber_mes) - (agenda_a_pay_mes := agenda_a_pagar_mes) - fatura_acumulada_mes
+
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
 if not lista_porquinhos_existentes:
     lista_porquinhos_existentes = ["🧱 Reserva de Emergência", "🏡 Comprar Casa"]
@@ -296,8 +302,19 @@ with aba_painel:
     st.markdown(f"### 👑 Saúde Disponível do Caixa ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
     c_caixa1.metric(label="Conta Corrente (Saldo Vivo)", value=f"R$ {saldo_disponivel_caixa:,.2f}")
-    c_caixa2.metric(label="🔮 Fatura Estimada Cartão", value=f"R$ {fatura_acumulada_mes:,.2f}", delta="-A pagar no vencimento", delta_color="inverse")
+    c_caixa2.metric(label="🔮 Fatura Estimada Cartão", value=f"R$ {fatura_acumulada_mes:,.2f}")
     c_caixa3.metric(label="Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}")
+
+    # Novo Painel de Previsibilidade solicitado
+    st.markdown("### 🔮 Simulador de Previsibilidade do Mês")
+    col_p1, col_p2, col_p3 = st.columns(3)
+    col_p1.metric(label="📉 Contas Fixas Agendadas", value=f"R$ {agenda_a_pagar_mes:,.2f}")
+    col_p2.metric(label="📈 Valores a Receber", value=f"R$ {agenda_a_receber_mes:,.2f}")
+    
+    if saldo_livre_projetado >= 0:
+        col_p3.metric(label="🔥 Saldo Livre Real Estimado", value=f"R$ {saldo_livre_projetado:,.2f}", delta="Cenário Seguro")
+    else:
+        col_p3.metric(label="🔥 Saldo Livre Real Estimado", value=f"R$ {saldo_livre_projetado:,.2f}", delta="Alerta: Caixa Negativo", delta_color="inverse")
 
     st.markdown("---")
     st.subheader("📊 Painel de Limites Orçamentários (Soma total de Pix + Crédito)")
@@ -353,7 +370,7 @@ with aba_painel:
         botao_enviar = st.form_submit_button("Confirmar Lançamento")
         
     if botao_enviar and supabase:
-        final_subcat = nome_novo_fundo if criando_novo_porquinho else categoria
+        final_subcat = nome_novo_fundo if criando_novo_porquinho else category = categoria
         final_valor = val_alvo_novo_fundo if criando_novo_porquinho else valor
         final_desc = f"Meta Criada: {nome_novo_fundo}" if criando_novo_porquinho else descricao
         
@@ -369,7 +386,7 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # ==================== NOVO MECANISMO DE RATEIO DE FATURA ====================
+    # ==================== MECANISMO DE RATEIO DE FATURA ====================
     st.markdown("---")
     st.subheader("💳 Rateio Rápido de Fatura Fechada (Ajustar Passado)")
     st.caption("Use esta ferramenta para desmembrar o valor total de uma fatura antiga de cartão de crédito diretamente nas categorias reais.")
@@ -535,16 +552,39 @@ with aba_agenda:
                 id_item = int(row["id"])
                 desc_pura = str(row["descricao"]).replace("[AGENDA COMPROMISSO] ", "")
                 valor_item = float(row["valor"])
+                data_original = pd.to_datetime(row["data"]).date()
                 
-                col_c1, col_c2, col_c3 = st.columns([4, 2, 1])
+                col_c1, col_c2, col_c3 = st.columns([4, 2, 2])
                 col_c1.write(f"📅 **{row['data']}** - {desc_pura} | **R$ {valor_item:,.2f}**")
                 
+                # Gerenciamento de botões na listagem
                 if "CONTAS A PAGAR" in str(row["grupo_orcamentario"]):
                     col_c2.caption("🔴 A Pagar")
+                    
+                    # Botão 1: Pagar (Liquida o compromisso atual e registra a saída real no mês corrente)
                     if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
                         supabase.table("movimentacoes").delete().eq("id", id_item).execute()
                         supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
                         st.rerun()
+                        
+                    # Botão 2: Repetir (Mantém o atual intacto, mas gera um clone idêntico +30 dias no futuro)
+                    nova_data_futura = data_original + datetime.timedelta(days=30)
+                    if col_c3.button("🔄 Repetir", key=f"rep_{id_item}", help="Clona esta mesma despesa para o mês seguinte (+30 dias)"):
+                        try:
+                            supabase.table("movimentacoes").insert({
+                                "data": str(nova_data_futura),
+                                "valor": valor_item,
+                                "tipo": str(row["tipo"]),
+                                "descricao": row["descricao"],
+                                "grupo_orcamentario": str(row["grupo_orcamentario"]),
+                                "subcategoria": str(row["subcategoria"]),
+                                "satisfacao": str(row["satisfacao"]),
+                                "user_id": USER_ID
+                            }).execute()
+                            st.success(f"🔄 Agendado para {nova_data_futura.strftime('%d/%m/%Y')}!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao clonar: {e}")
                 else:
                     col_c2.caption("🟢 A Receber")
                     if col_c3.button("💰 Receber", key=f"rec_{id_item}"):
