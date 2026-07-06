@@ -167,7 +167,7 @@ if supabase:
                     renda_base_usuario = val_mov
                     continue
                 
-                if "📅 AGENDA" in group := grupo:
+                if "📅 AGENDA" in grupo:
                     if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
                         if "📅 AGENDA: CONTAS A PAGAR" in grupo:
                             agenda_a_pagar_mes += val_mov
@@ -280,7 +280,7 @@ if st.sidebar.button("🔄 Conciliar com o Banco"):
             
             supabase.table("movimentacoes").insert({
                 "data": str(hoje), "valor": float(abs(discrepancia)), "tipo": tipo_ajuste,
-                "descricao": "[AJUSTE] Alinhamento de Saldo Real", "grupo_orcamentario": group_ajuste := grupo_ajuste,
+                "descricao": "[AJUSTE] Alinhamento de Saldo Real", "grupo_orcamentario": grupo_ajuste,
                 "subcategoria": "Ajuste de Saldo", "satisfacao": "3 - Indispensável", "user_id": USER_ID
             }).execute()
             st.sidebar.success("🎉 Ledger equilibrado com sucesso!")
@@ -368,7 +368,7 @@ with aba_painel:
         val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=50.0)
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
-        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=0.01, format="%.2f")
+        valor = st.number_input("Qual o valor da operation? (R$)", min_value=0.0, step=0.01, format="%.2f")
         if criando_novo_porquinho:
             tipo = st.radio("Fluxo Financeiro:", ["Faturamento ou Receita (Entrada)"])
         else:
