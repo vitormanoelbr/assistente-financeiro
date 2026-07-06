@@ -144,7 +144,8 @@ if supabase:
         supabase.postgrest.auth(st.session_state["user_token"])
         resposta_completa = supabase.table("movimentacoes").select("id, data, descricao, grupo_orcamentario, subcategoria, valor, satisfacao, tipo, user_id").execute()
         
-        if res_data := resposta_completa.data:
+        if resposta_completa and hasattr(resposta_completa, 'data') and resposta_completa.data:
+            res_data = resposta_completa.data
             df_todos_dados = pd.DataFrame(res_data)
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
@@ -261,7 +262,7 @@ if st.sidebar.button("💾 Salvar Renda Base"):
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
             "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
         }).execute()
-        st.sidebar.success("Renda atualizada!")
+        st.sidebar.success("Renda updated!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
@@ -368,6 +369,68 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
+    # ==================== NOVO MECANISMO DE RATEIO DE FATURA ====================
+    st.markdown("---")
+    st.subheader("💳 Rateio Rápido de Fatura Fechada (Ajustar Passado)")
+    st.caption("Use esta ferramenta para desmembrar o valor total de uma fatura antiga de cartão de crédito diretamente nas categorias reais.")
+
+    with st.form("formulario_rateio_fatura", clear_on_submit=True):
+        col_f1, col_f2 = st.columns(2)
+        val_total_fatura = col_f1.number_input("Valor Total Pago na Fatura (R$):", min_value=0.0, step=0.01, format="%.2f")
+        data_fatura = col_f2.date_input("Data do Pagamento da Fatura:", datetime.date.today())
+        
+        descricao_fatura = st.text_input("Identificação da Fatura:", placeholder="Ex: Fatura Nubank - Junho/2026")
+        
+        st.markdown("**Distribuição Estratégica dos Gastos Dentro da Fatura:**")
+        col_r1, col_r2 = st.columns(2)
+        rateio_essencial = col_r1.number_input("🔴 Quanto foi Essencial (50%)? (R$)", min_value=0.0, step=0.01, format="%.2f")
+        rateio_estilo = col_r2.number_input("🟡 Quanto foi Estilo de Vida (30%)? (R$)", min_value=0.0, step=0.01, format="%.2f")
+        
+        col_r3, col_r4 = st.columns(2)
+        rateio_negocio = col_r3.number_input("💼 Quanto foi Custos de Negócio? (R$)", min_value=0.0, step=0.01, format="%.2f")
+        rateio_dividas = col_r4.number_input("📋 Quanto foi Quitação de Dívidas? (R$)", min_value=0.0, step=0.01, format="%.2f")
+        
+        botao_enviar_rateio = st.form_submit_button("💥 Desmembrar e Sincronizar Fatura")
+
+    if botao_enviar_rateio and supabase:
+        soma_partes = rateio_essencial + rateio_estilo + rateio_negocio + rateio_dividas
+        
+        if not descricao_fatura:
+            st.error("❌ Por favor, insira uma identificação para esta fatura.")
+        elif val_total_fatura <= 0:
+            st.error("❌ O valor total da fatura precisa ser maior que zero.")
+        elif round(soma_partes, 2) != round(val_total_fatura, 2):
+            st.error(f"❌ A soma das categorias (R$ {soma_partes:,.2f}) não bate com o valor total informado da fatura (R$ {val_total_fatura:,.2f}). Diferença: R$ {abs(val_total_fatura - soma_partes):,.2f}")
+        else:
+            try:
+                inserts_pendentes = []
+                mapeamento_rateio = [
+                    {"valor": rateio_essencial, "grupo": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcat": "Contas Fixas (Luz, Água, Internet)"},
+                    {"valor": rateio_estilo, "grupo": "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)", "subcat": "Lazer, Bares & Restaurantes"},
+                    {"valor": rateio_negocio, "grupo": "💼 Custos de Negócio (Projetos e Clínica)", "subcat": "Infraestrutura & Custos Operacionais"},
+                    {"valor": rateio_dividas, "grupo": "📋 Quitação de Dívidas (Amortizações e Acordos)", "subcat": "Cartão de Crédito Atrasado"}
+                ]
+                
+                for item in mapeamento_rateio:
+                    if item["valor"] > 0:
+                        inserts_pendentes.append({
+                            "data": str(data_fatura),
+                            "valor": float(item["valor"]),
+                            "tipo": "💳 Saída Cartão de Crédito",
+                            "descricao": f"{descricao_fatura} [Rateio]",
+                            "grupo_orcamentario": item["grupo"],
+                            "subcategoria": item["subcat"],
+                            "satisfacao": "3 - Indispensável",
+                            "user_id": USER_ID
+                        })
+                
+                if inserts_pendentes:
+                    supabase.table("movimentacoes").insert(inserts_pendentes).execute()
+                    st.success(f"🎉 Perfeito! A fatura foi fragmentada em {len(inserts_pendentes)} lançamentos estratégicos no Supabase.")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Falha ao processar rateio no banco de dados: {e}")
+
     # Tabela Gerenciadora
     st.markdown("---")
     st.subheader("📋 Gerenciar Lançamentos do Período")
@@ -466,7 +529,6 @@ with aba_agenda:
     if supabase and not df_todos_dados.empty:
         df_agenda_pura = df_todos_dados[df_todos_dados["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
         if not df_agenda_pura.empty:
-            # Ordena por data para ficar intuitivo
             df_agenda_pura = df_agenda_pura.sort_values(by="data")
             
             for idx, row in df_agenda_pura.iterrows():
@@ -474,7 +536,6 @@ with aba_agenda:
                 desc_pura = str(row["descricao"]).replace("[AGENDA COMPROMISSO] ", "")
                 valor_item = float(row["valor"])
                 
-                # Grade simétrica de colunas para alinhar perfeitamente os botões da lista
                 col_c1, col_c2, col_c3 = st.columns([4, 2, 1])
                 col_c1.write(f"📅 **{row['data']}** - {desc_pura} | **R$ {valor_item:,.2f}**")
                 
