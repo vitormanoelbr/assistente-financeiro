@@ -95,7 +95,7 @@ USER_ID = st.session_state["usuario_logado"]
 if st.sidebar.button("🚪 Sair da Conta"):
     deslogar_usuario()
 
-# --- 📅 FILTROS DE CONTROLE ---
+# --- 📅 FILTROS DE TEMPO & TAGS ---
 st.sidebar.header("📅 Filtros do Painel")
 hoje = datetime.date.today()
 ano_selected = st.sidebar.selectbox("Ano de Análise:", [hoje.year, hoje.year - 1, hoje.year + 1], index=0)
@@ -113,25 +113,15 @@ mes_selected_num = st.sidebar.selectbox(
 janela_tempo = st.sidebar.radio("Intervalo do Painel:", ["Mês Completo", "Últimos 7 Dias", "Somente Hoje"])
 
 st.sidebar.markdown("---")
-st.sidebar.header("⚙️ Parâmetros do Usuário")
-
-# Guardamos as configurações em Session State para não misturar lixo na tabela de movimentações
-if "renda_base" not in st.session_state:
-    st.session_state["renda_base"] = 2500.00
-if "saldo_manual" not in st.session_state:
-    st.session_state["saldo_manual"] = 0.0
-
-renda_base_usuario = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=st.session_state["renda_base"], step=50.0, format="%.2f")
-saldo_bancario_inicial = st.sidebar.number_input("Saldo Real do seu Banco Hoje (R$):", min_value=-99999.0, value=st.session_state["saldo_manual"], step=50.0, format="%.2f")
-
-st.session_state["renda_base"] = renda_base_usuario
-st.session_state["saldo_manual"] = saldo_bancario_inicial
-
-st.sidebar.markdown("---")
 st.sidebar.header("🏷️ Rastreamento Inteligente")
 tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #filho, #viagem").strip().lower()
 
-# --- PROCESSAMENTO LÓGICO DAS MÉTRICAS ---
+# --- PROCESSAMENTO LÓGICO ---
+renda_base_usuario = 2500.00  
+
+global_entradas = 0.0
+global_saidas_caixa = 0.0
+
 faturamento_extra_mes = 0.0
 gastos_reais_mes = 0.0       
 saidas_imediatas_caixa = 0.0 
@@ -170,13 +160,13 @@ if supabase:
                 subcat = item.get("subcategoria") or ""
                 tipo_mov = item.get("tipo") or ""
                 val_mov = float(item["valor"] or 0.0)
+                desc = item.get("descricao") or ""
                 dt_item = pd.to_datetime(item["data"]).date()
                 
-                # Ignora qualquer linha antiga de configuração que tenha ficado órfã no banco
-                if "CONFIGURACAO" in grupo or "CONFIG_PERFIL" in str(item.get("descricao")):
+                if "[CONFIG_PERFIL]" in desc and "Renda Base Nativa" in subcat:
+                    renda_base_usuario = val_mov
                     continue
                 
-                # Processamento exclusivo da aba de Agenda
                 if "📅 AGENDA" in grupo:
                     if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
                         if "📅 AGENDA: CONTAS A PAGAR" in grupo:
@@ -185,7 +175,11 @@ if supabase:
                             agenda_a_receber_mes += val_mov
                     continue
                 
-                # Regras de metas e porquinhos
+                if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
+                    global_entradas += val_mov
+                elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "[AJUSTE]" in desc:
+                    global_saidas_caixa += val_mov
+
                 if "🚀 20% Aporte" in grupo and "Entrada" in tipo_mov:
                     dicionario_metas_alvo[subcat] = val_mov
                 elif "📋 Quitação de Dívidas" in grupo:
@@ -193,13 +187,11 @@ if supabase:
                         DIVIDA_TOTAL_INICIAL += val_mov
                     else:
                         total_pago_divida += val_mov
-                elif "🚀 20% Aporte" in group := grupo and "Saída" in tipo_mov:
+                elif "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
-            # Filtragem dos dados para exibição e consumo orçamentário
             df_filtrado = df_todos_dados.copy()
             if not df_filtrado.empty:
-                # Remove linhas de configuração do dataframe para sumirem da tabela visual
                 df_filtrado = df_filtrado[~df_filtrado["grupo_orcamentario"].str.contains("CONFIGURAC", na=False)]
                 df_filtrado = df_filtrado[~df_filtrado["descricao"].str.contains("CONFIG_PERFIL", na=False)]
                 
@@ -220,7 +212,6 @@ if supabase:
                     lambda r: pd.Series(calcular_mes_fatura(r)), axis=1
                 )
                 
-                # Filtro do Mês de Análise Comercial
                 df_filtrado = df_filtrado[
                     ((df_filtrado["tipo"].str.contains("💳|Cartão", na=False)) & (df_filtrado["ano_fatura"] == ano_selected) & (df_filtrado["mes_fatura"] == mes_selected_num)) |
                     ((~df_filtrado["tipo"].str.contains("💳|Cartão", na=False)) & (df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num))
@@ -228,16 +219,15 @@ if supabase:
 
             df_acumulado_mes_cheio = df_filtrado.copy()
 
-            if janela_tempo == "Últimos 7 Dias":
+            if jendela_tempo == "Últimos 7 Dias":
                 df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
-            elif janela_tempo == "Somente Hoje":
+            elif jendela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
             
             if tag_busca:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
                 df_filtrado = df_filtrado[df_filtrado["descricao_lower"].str.contains(tag_busca, na=False)]
                 
-            # Cálculo Orçamentário Estratégico do Mês
             for _, row in df_acumulado_mes_cheio.iterrows():
                 val = float(row["valor"])
                 grupo_item = str(row["grupo_orcamentario"] or "")
@@ -268,10 +258,50 @@ if supabase:
         else:
             st.error(f"Erro na validação de dados: {e}")
 
-# --- 🚀 CÁLCULO MATEMÁTICO REALISTA DE SALDO ---
-# O saldo calculado passa a somar estritAMENTE o que você informou na lateral com as entradas/saídas do mês analisado
-saldo_real_exibido = (saldo_bancario_inicial + faturamento_extra_mes) - saidas_imediatas_caixa
+# --- CONTROLE DE SALDO ---
+saldo_real_exibido = global_entradas - global_saidas_caixa
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
+
+st.sidebar.markdown("---")
+st.sidebar.header("⚙️ Sincronização de Saldos")
+
+novo_saldo_banco = st.sidebar.number_input("Saldo Real do seu Banco Hoje (R$):", min_value=-99999.0, value=saldo_real_exibido, step=10.0, format="%.2f")
+
+if st.sidebar.button("🔄 Conciliar com o Banco"):
+    discrepancia = novo_saldo_banco - saldo_real_exibido
+    if discrepancia != 0:
+        try:
+            if discrepancia > 0:
+                tipo_ajuste = "Faturamento ou Receita (Entrada)"
+                grupo_ajuste = "⚙️ CONFIGURAÇÃO"
+            else:
+                tipo_ajuste = "📱 Saída Dinheiro / Pix (Débito)"
+                grupo_ajuste = "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)"
+            
+            supabase.table("movimentacoes").insert({
+                "data": str(hoje), "valor": float(abs(discrepancia)), "tipo": tipo_ajuste,
+                "descricao": "[AJUSTE] Alinhamento de Saldo Real", "grupo_orcamentario": grupo_ajuste,
+                "subcategoria": "Ajuste de Saldo", "satisfacao": "3 - Indispensável", "user_id": USER_ID
+            }).execute()
+            st.sidebar.success("🎉 Ledger equilibrado com sucesso!")
+            st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"Erro ao ajustar saldo: {e}")
+
+nova_renda_input = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=renda_base_usuario, step=50.0, format="%.2f")
+if st.sidebar.button("💾 Salvar Renda Base"):
+    try:
+        if not df_todos_dados.empty:
+            supabase.table("movimentacoes").delete().eq("subcategoria", "Renda Base Nativa").eq("user_id", USER_ID).execute()
+        supabase.table("movimentacoes").insert({
+            "data": str(hoje), "valor": float(nova_renda_input), "tipo": "Faturamento ou Receita (Entrada)",
+            "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
+            "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
+        }).execute()
+        st.sidebar.success("Renda salva!")
+        st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Erro: {e}")
 
 LIMITE_ESSENCIAL = renda_base_usuario * 0.50       
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
@@ -297,7 +327,7 @@ with aba_painel:
     
     st.markdown(f"### 👑 Movimentação de Caixa Real ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Saldo inicial definido na lateral + entradas reais do mês - saídas reais em Pix/Débito.")
+    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Histórico real consolidado de entradas e saídas de caixa da conta corrente.")
     c_caixa2.metric(label="💳 Cartão (A Vencer)", value=f"R$ {fatura_acumulada_mes:,.2f}", help="Total acumulado em compras no crédito com vencimento neste mês.")
     c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}", help="Soma de tudo o que foi consumido no período (Débito + Crédito)")
 
@@ -311,7 +341,6 @@ with aba_painel:
     st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
     st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
 
-    # Donut Chart
     try:
         df_saidas = df_filtrado[df_filtrado["tipo"].str.contains("Saída|📱|💳", na=False)].copy()
         if not df_saidas.empty:
@@ -511,9 +540,9 @@ with aba_agenda:
     
     balanco_agenda = agenda_a_receber_mes - agenda_a_pagar_mes
     if balanco_agenda >= 0:
-        col_ag3.metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Superávit de Compromissos")
+        st.columns(3)[2].metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Superávit de Compromissos")
     else:
-        col_ag3.metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Déficit de Compromissos", delta_color="inverse")
+        st.columns(3)[2].metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Déficit de Compromissos", delta_color="inverse")
     
     st.markdown("---")
     col_agenda1, col_agenda2 = st.columns(2)
