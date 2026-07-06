@@ -219,7 +219,7 @@ if supabase:
 
             df_acumulado_mes_cheio = df_filtrado.copy()
 
-            if janela_tempo == "Últimos 7 Dias":
+            if janela_tempo == "Últimos 7 Days" or janela_tempo == "Últimos 7 Dias":
                 df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
@@ -248,7 +248,7 @@ if supabase:
                         gastos_estilo += val
                     elif "20% Aporte" in grupo_item:
                         gastos_aporte_mes += val
-                    elif "💼 Custos de Negócio" in grupo_item:
+                    elif "💼 Custos de Negócio" in group_item := grupo_item:
                         gastos_negocio += val
                     
     except Exception as e:
@@ -298,7 +298,7 @@ if st.sidebar.button("💾 Salvar Renda Base"):
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
             "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
         }).execute()
-        st.sidebar.success("Renda salva!")
+        st.success("Renda salva!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
@@ -535,10 +535,10 @@ with aba_agenda:
     
     st.markdown("### 📊 Fluxo de Caixa Projetado da Agenda")
     col_ag1, col_ag2, col_ag3 = st.columns(3)
-    col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pay := agenda_a_pagar_mes:,.2f}")
-    col_ag2.metric(label="🟢 Recebimentos Agendados", value=f"R$ {agenda_a_rec := agenda_a_receber_mes:,.2f}")
+    col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pagar_mes:,.2f}")
+    col_ag2.metric(label="🟢 Recebimentos Agendados", value=f"R$ {agenda_a_receber_mes:,.2f}")
     
-    balanco_agenda = agenda_a_rec - agenda_a_pay
+    balanco_agenda = agenda_a_receber_mes - agenda_a_pagar_mes
     if balanco_agenda >= 0:
         col_ag3.metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Superávit de Compromissos")
     else:
