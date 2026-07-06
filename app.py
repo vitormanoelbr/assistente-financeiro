@@ -169,12 +169,12 @@ if supabase:
                         saldo_bancario_inicial = val_mov
                     continue
                 
-                # Mapeamento Global da Agenda do Mês Selecionado
+                # Mapeamento Global da Agenda do Mês Selecionado (Uso estrito de 'grupo')
                 if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
-                    if "📅 AGENDA: CONTAS A PAGAR" in group_orcamentario:
+                    if "📅 AGENDA: CONTAS A PAGAR" in grupo:
                         agenda_a_pagar_mes += val_mov
                         continue
-                    elif "📅 AGENDA: CONTAS A RECEBER" in group_orcamentario:
+                    elif "📅 AGENDA: CONTAS A RECEBER" in grupo:
                         agenda_a_receber_mes += val_mov
                         continue
                         
@@ -274,7 +274,6 @@ novo_saldo_banco = st.sidebar.number_input("Saldo Real do seu Banco Hoje (R$):",
 if st.sidebar.button("🔄 Conciliar Saldo Bancário"):
     try:
         if not df_todos_dados.empty:
-            # Garante a exclusão usando filtros estritos para evitar duplicações
             supabase.table("movimentacoes").delete().eq("subcategoria", "Saldo Conciliado Banco").eq("user_id", USER_ID).execute()
         supabase.table("movimentacoes").insert({
             "data": str(hoje), "valor": float(novo_saldo_banco), "tipo": "Faturamento ou Receita (Entrada)",
@@ -301,12 +300,12 @@ if st.sidebar.button("💾 Salvar Renda Base"):
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
 
+# --- PARÂMETROS DE CÁLCULO ---
 LIMITE_ESSENCIAL = renda_base_usuario * 0.50       
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
 META_APORTE_MENSAL = renda_base_usuario * 0.20           
 
-# --- 🚀 REGRA MATEMÁTICA DA CONCILIAÇÃO ---
-# Saldo Atual = Saldo Inicial do Banco + Faturamentos do Mês - Saídas Reais (Pix/Débito)
+# Saldo Atual Incremental = Saldo Inicial do Banco + Faturamentos do Mês - Saídas Reais (Pix/Débito)
 saldo_real_exibido = saldo_bancario_inicial + faturamento_extra_mes - saidas_imediatas_caixa
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
