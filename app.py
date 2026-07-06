@@ -118,7 +118,7 @@ tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #
 
 # --- PROCESSAMENTO LÓGICO ---
 renda_base_usuario = 2500.00  
-saldo_bancario_inicial = 0.0  # Ponto de partida padrão de conciliação
+saldo_bancario_inicial = 0.0  
 
 faturamento_extra_mes = 0.0
 gastos_reais_mes = 0.0       
@@ -171,10 +171,10 @@ if supabase:
                 
                 # Mapeamento Global da Agenda do Mês Selecionado
                 if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
-                    if "📅 AGENDA: CONTAS A PAGAR" in grupo:
+                    if "📅 AGENDA: CONTAS A PAGAR" in group_orcamentario:
                         agenda_a_pagar_mes += val_mov
                         continue
-                    elif "📅 AGENDA: CONTAS A RECEBER" in grupo:
+                    elif "📅 AGENDA: CONTAS A RECEBER" in group_orcamentario:
                         agenda_a_receber_mes += val_mov
                         continue
                         
@@ -269,13 +269,13 @@ if supabase:
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Sincronização de Saldos")
 
-# Campo Mágico: Aqui o usuário crava a verdade real do extrato bancário
-novo_saldo_banco = st.sidebar.number_input("Saldo Real do seu Banco Hoje (R$):", min_value=-99999.0, value=saldo_bancario_inicial, step=10.0, format="%.2f", help="Digite exatamente o valor que aparece na tela do app do seu banco agora.")
+novo_saldo_banco = st.sidebar.number_input("Saldo Real do seu Banco Hoje (R$):", min_value=-99999.0, value=saldo_bancario_inicial, step=10.0, format="%.2f")
 
 if st.sidebar.button("🔄 Conciliar Saldo Bancário"):
     try:
         if not df_todos_dados.empty:
-            supabase.table("movimentacoes").delete().eq("descricao", "[CONFIG_PERFIL] Saldo Inicial").eq("user_id", USER_ID).execute()
+            # Garante a exclusão usando filtros estritos para evitar duplicações
+            supabase.table("movimentacoes").delete().eq("subcategoria", "Saldo Conciliado Banco").eq("user_id", USER_ID).execute()
         supabase.table("movimentacoes").insert({
             "data": str(hoje), "valor": float(novo_saldo_banco), "tipo": "Faturamento ou Receita (Entrada)",
             "descricao": "[CONFIG_PERFIL] Saldo Inicial", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
@@ -290,7 +290,7 @@ nova_renda_input = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_va
 if st.sidebar.button("💾 Salvar Renda Base"):
     try:
         if not df_todos_dados.empty:
-            supabase.table("movimentacoes").delete().eq("descricao", "[CONFIG_PERFIL] Renda Base").eq("user_id", USER_ID).execute()
+            supabase.table("movimentacoes").delete().eq("subcategoria", "Renda Base Nativa").eq("user_id", USER_ID).execute()
         supabase.table("movimentacoes").insert({
             "data": str(hoje), "valor": float(nova_renda_input), "tipo": "Faturamento ou Receita (Entrada)",
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
@@ -305,9 +305,9 @@ LIMITE_ESSENCIAL = renda_base_usuario * 0.50
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
 META_APORTE_MENSAL = renda_base_usuario * 0.20           
 
-# --- 🚀 REGRA DE CONCILIAÇÃO ESCALÁVEL ---
-# O saldo exibido passa a ser RIGOROSAMENTE o ponto fixo informado pelo usuário
-saldo_real_exibido = saldo_bancario_inicial
+# --- 🚀 REGRA MATEMÁTICA DA CONCILIAÇÃO ---
+# Saldo Atual = Saldo Inicial do Banco + Faturamentos do Mês - Saídas Reais (Pix/Débito)
+saldo_real_exibido = saldo_bancario_inicial + faturamento_extra_mes - saidas_imediatas_caixa
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
@@ -328,10 +328,9 @@ aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", 
 with aba_painel:
     st.title("📲 Meu Planner Financeiro")
     
-    # Painel de Controle 100% Honesto (Fatos Puros)
     st.markdown(f"### 👑 Movimentação de Caixa Real ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="💰 Saldo Conciliado em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="O saldo real informado por você na barra lateral.")
+    c_caixa1.metric(label="💰 Saldo Calculado em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Saldo Inicial informado + Entradas registradas - Saídas no Pix/Débito.")
     c_caixa2.metric(label="💳 Cartão (A Vencer)", value=f"R$ {fatura_acumulada_mes:,.2f}", help="Total acumulado em compras no crédito com vencimento neste mês.")
     c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}", help="Soma de tudo o que foi consumido no período (Débito + Crédito)")
 
@@ -414,7 +413,6 @@ with aba_painel:
         col_f1, col_f2 = st.columns(2)
         val_total_fatura = col_f1.number_input("Valor Total Pago na Fatura (R$):", min_value=0.0, step=0.01, format="%.2f")
         data_fatura = col_f2.date_input("Data do Pagamento da Fatura:", datetime.date.today())
-        
         descricao_fatura = st.text_input("Identificação da Fatura:", placeholder="Ex: Fatura Nubank - Junho/2026")
         
         st.markdown("**Distribuição Estratégica dos Gastos Dentro da Fatura:**")
@@ -425,7 +423,6 @@ with aba_painel:
         col_r3, col_r4 = st.columns(2)
         rateio_negocio = col_r3.number_input("💼 Quanto foi Custos de Negócio? (R$)", min_value=0.0, step=0.01, format="%.2f")
         rateio_dividas = col_r4.number_input("📋 Quanto foi Quitação de Dívidas? (R$)", min_value=0.0, step=0.01, format="%.2f")
-        
         botao_enviar_rateio = st.form_submit_button("💥 Desmembrar e Sincronizar Fatura")
 
     if botao_enviar_rateio and supabase:
@@ -536,11 +533,10 @@ with aba_porquinhos:
             st.progress(min((total_patrimonio_guardado / alvo_valor), 1.0))
         st.markdown("---")
 
-# ==================== ABA 3 (AGENDA / PREVISIBILIDADE STRATEGICA) ====================
+# ==================== ABA 3 (AGENDA) ====================
 with aba_agenda:
     st.title("📅 Agenda de Compromissos Financeiros")
     
-    # Previsibilidade isolada no local adequado da jornada
     st.markdown("### 📊 Fluxo de Caixa Projetado da Agenda")
     col_ag1, col_ag2, col_ag3 = st.columns(3)
     col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pagar_mes:,.2f}")
