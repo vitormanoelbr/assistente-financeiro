@@ -219,9 +219,9 @@ if supabase:
 
             df_acumulado_mes_cheio = df_filtrado.copy()
 
-            if jendela_tempo == "Últimos 7 Dias":
+            if janela_tempo == "Últimos 7 Dias":
                 df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
-            elif jendela_tempo == "Somente Hoje":
+            elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
             
             if tag_busca:
@@ -329,7 +329,7 @@ with aba_painel:
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
     c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Histórico real consolidado de entradas e saídas de caixa da conta corrente.")
     c_caixa2.metric(label="💳 Cartão (A Vencer)", value=f"R$ {fatura_acumulada_mes:,.2f}", help="Total acumulado em compras no crédito com vencimento neste mês.")
-    c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}", help="Soma de tudo o que foi consumido no período (Débito + Crédito)")
+    c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}", help="Soma de tudo o que foi conhecido no período (Débito + Crédito)")
 
     st.markdown("---")
     st.subheader("📊 Painel de Limites Orçamentários (Soma total de Pix + Crédito)")
@@ -535,14 +535,14 @@ with aba_agenda:
     
     st.markdown("### 📊 Fluxo de Caixa Projetado da Agenda")
     col_ag1, col_ag2, col_ag3 = st.columns(3)
-    col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pagar_mes:,.2f}")
-    col_ag2.metric(label="🟢 Recebimentos Agendados", value=f"R$ {agenda_a_receber_mes:,.2f}")
+    col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pay := agenda_a_pagar_mes:,.2f}")
+    col_ag2.metric(label="🟢 Recebimentos Agendados", value=f"R$ {agenda_a_rec := agenda_a_receber_mes:,.2f}")
     
-    balanco_agenda = agenda_a_receber_mes - agenda_a_pagar_mes
+    balanco_agenda = agenda_a_rec - agenda_a_pay
     if balanco_agenda >= 0:
-        st.columns(3)[2].metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Superávit de Compromissos")
+        col_ag3.metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Superávit de Compromissos")
     else:
-        st.columns(3)[2].metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Déficit de Compromissos", delta_color="inverse")
+        col_ag3.metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Déficit de Compromissos", delta_color="inverse")
     
     st.markdown("---")
     col_agenda1, col_agenda2 = st.columns(2)
