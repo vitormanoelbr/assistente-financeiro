@@ -368,7 +368,7 @@ with aba_painel:
         val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=50.0)
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
-        valor = st.number_input("Qual o valor da operation? (R$)", min_value=0.0, step=0.01, format="%.2f")
+        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=0.01, format="%.2f")
         if criando_novo_porquinho:
             tipo = st.radio("Fluxo Financeiro:", ["Faturamento ou Receita (Entrada)"])
         else:
@@ -392,7 +392,7 @@ with aba_painel:
             try:
                 supabase.table("movimentacoes").insert({
                     "data": str(data_movimento), "valor": float(final_valor), "tipo": tipo,
-                    "descricao": final_desc, "grupo_orcamentario": grupo_orcamentario,
+                    "descricao": final_desc, "grupo_orcamentario": group_orcamentario,
                     "subcategoria": final_subcat, "satisfacao": satisfacao, "user_id": USER_ID
                 }).execute()
                 st.success("✅ Sincronizado com sucesso!")
@@ -472,7 +472,7 @@ with aba_painel:
             try:
                 linhas_atuais_ids = set(dados_editados["ID"].tolist())
                 linhas_originais_ids = set(df_editor["ID"].tolist())
-                for id_del in (linhas_originais_ids - linhas_atuais_ids):
+                for id_del in (linhas_originais_ids - lines_atuais_ids):
                     supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
                 for _, row in dados_editados.iterrows():
                     row_id = int(row["ID"])
