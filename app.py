@@ -64,7 +64,7 @@ if st.session_state["usuario_logado"] is None:
     with aba_cadastro:
         with st.form("form_cadastro"):
             email_cad = st.text_input("Escolha um E-mail:", placeholder="seu@email.com")
-            senha_cad = st.text_input("Escolha uma Senha (mínimo 6 caracteres):", type="password", placeholder="******")
+            senha_cad = st.text_input("Escolha um Senha (mínimo 6 caracteres):", type="password", placeholder="******")
             botao_cad = st.form_submit_button("Cadastrar e Criar Plataforma")
             
             if botao_cad:
@@ -211,11 +211,10 @@ if supabase:
                     ((~df_filtrado["tipo"].str.contains("💳|Cartão", na=False)) & (df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num))
                 ]
 
-            if ...:  # Mantendo a árvore do if simplificada e segura
-                if janela_tempo == "Últimos 7 Dias":
-                    df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
-                elif janela_tempo == "Somente Hoje":
-                    df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
+            if janela_tempo == "Últimos 7 Dias":
+                df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
+            elif janela_tempo == "Somente Hoje":
+                df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
             
             if tag_busca:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
@@ -242,8 +241,8 @@ if supabase:
                     
                     if "50% Essencial" in grupo:
                         gastos_essencial += val
-                    elif "30% Estilo de Vida" in group := group = "30% Estilo de Vida" if "30% Estilo de Vida" in grupo else "": # Simplificado internamente de forma segura
-                        if "30% Estilo de Vida" in grupo: gastos_estilo += val
+                    elif "30% Estilo de Vida" in grupo:
+                        gastos_estilo += val
                     elif "20% Aporte" in grupo:
                         gastos_aporte_mes += val
                     elif "💼 Custos de Negócio" in grupo:
@@ -279,7 +278,7 @@ receitas_totais_calculadas = renda_base_usuario + faturamento_extra_mes if not t
 saldo_disponivel_caixa = receitas_totais_calculadas - saidas_imediatas_caixa
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
-# --- CÁLCULO DE PREVISIBILIDADE CORRIGIDO ---
+# --- CÁLCULO DE PREVISIBILIDADE ---
 saldo_livre_projetado = (saldo_disponivel_caixa + agenda_a_receber_mes) - agenda_a_pagar_mes - fatura_acumulada_mes
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
@@ -378,7 +377,7 @@ with aba_painel:
             try:
                 supabase.table("movimentacoes").insert({
                     "data": str(data_movimento), "valor": float(final_valor), "tipo": tipo,
-                    "descricao": final_desc, "grupo_orcamentario": group_orcam := grupo_orcamentario, # Correção de atribuição segura
+                    "descricao": final_desc, "grupo_orcamentario": grupo_orcamentario,
                     "subcategoria": final_subcat, "satisfacao": satisfacao, "user_id": USER_ID
                 }).execute()
                 st.success("✅ Sincronizado com sucesso!")
