@@ -191,14 +191,14 @@ if supabase:
             
             # --- MOTOR DO CARTÃO DE CRÉDITO ---
             def calcular_mes_fatura(linha):
-                dt = linea_dt := linha["data_dt"]
+                dt = linha["data_dt"]
                 tipo_pgto = str(linha.get("tipo") or "")
                 if "💳" in tipo_pgto or "Cartão" in tipo_pgto:
-                    if linea_dt.day > 20:
-                        proximo_mes = linea_dt.month + 1 if linea_dt.month < 12 else 1
-                        proximo_ano = linea_dt.year if linea_dt.month < 12 else linea_dt.year + 1
+                    if dt.day > 20:
+                        proximo_mes = dt.month + 1 if dt.month < 12 else 1
+                        proximo_ano = dt.year if dt.month < 12 else dt.year + 1
                         return proximo_ano, proximo_mes
-                return linea_dt.year, linea_dt.month
+                return dt.year, dt.month
 
             if not df_filtrado.empty:
                 df_filtrado[["ano_fatura", "mes_fatura"]] = df_filtrado.apply(
@@ -279,7 +279,7 @@ META_APORTE_MENSAL = renda_base_usuario * 0.20
 
 # Regra de cálculo Factual do Extrato Real (Sem misturar previsões)
 entradas_reais = faturamento_extra_mes if faturamento_extra_mes > 0 else renda_base_usuario
-saldo_real_hoje = entries := entradas_reais - saidas_imediatas_caixa
+saldo_real_hoje = entradas_reais - saidas_imediatas_caixa
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
@@ -445,7 +445,7 @@ with aba_painel:
     if supabase and not df_filtrado.empty:
         df_editor = df_filtrado[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
         df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Meio / Tipo"]
-        dados_editados = st.data_editor(df_editor, use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic")
+        dados_editados = st.data_editor(use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic", data=df_editor)
         
         if st.button("💾 Salvar Alterações da Tabela"):
             try:
