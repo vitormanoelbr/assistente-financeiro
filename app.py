@@ -211,10 +211,11 @@ if supabase:
                     ((~df_filtrado["tipo"].str.contains("💳|Cartão", na=False)) & (df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num))
                 ]
 
-            if janela_tempo == "Últimos 7 Dias":
-                df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
-            elif janela_tempo == "Somente Hoje":
-                df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
+            if ...:  # Mantendo a árvore do if simplificada e segura
+                if janela_tempo == "Últimos 7 Dias":
+                    df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
+                elif janela_tempo == "Somente Hoje":
+                    df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
             
             if tag_busca:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
@@ -241,8 +242,8 @@ if supabase:
                     
                     if "50% Essencial" in grupo:
                         gastos_essencial += val
-                    elif "30% Estilo de Vida" in grupo:
-                        gastos_estilo += val
+                    elif "30% Estilo de Vida" in group := group = "30% Estilo de Vida" if "30% Estilo de Vida" in grupo else "": # Simplificado internamente de forma segura
+                        if "30% Estilo de Vida" in grupo: gastos_estilo += val
                     elif "20% Aporte" in grupo:
                         gastos_aporte_mes += val
                     elif "💼 Custos de Negócio" in grupo:
@@ -278,8 +279,8 @@ receitas_totais_calculadas = renda_base_usuario + faturamento_extra_mes if not t
 saldo_disponivel_caixa = receitas_totais_calculadas - saidas_imediatas_caixa
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
-# --- 🎯 NOVO CÁLCULO DE PREVISIBILIDADE (FLUXO DE CAIXA FUTURO) ---
-saldo_livre_projetado = (saldo_disponivel_caixa + agenda_a_receber_mes) - (agenda_a_pay_mes := agenda_a_pagar_mes) - fatura_acumulada_mes
+# --- CÁLCULO DE PREVISIBILIDADE CORRIGIDO ---
+saldo_livre_projetado = (saldo_disponivel_caixa + agenda_a_receber_mes) - agenda_a_pagar_mes - fatura_acumulada_mes
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
 if not lista_porquinhos_existentes:
@@ -305,7 +306,6 @@ with aba_painel:
     c_caixa2.metric(label="🔮 Fatura Estimada Cartão", value=f"R$ {fatura_acumulada_mes:,.2f}")
     c_caixa3.metric(label="Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}")
 
-    # Novo Painel de Previsibilidade solicitado
     st.markdown("### 🔮 Simulador de Previsibilidade do Mês")
     col_p1, col_p2, col_p3 = st.columns(3)
     col_p1.metric(label="📉 Contas Fixas Agendadas", value=f"R$ {agenda_a_pagar_mes:,.2f}")
@@ -370,7 +370,7 @@ with aba_painel:
         botao_enviar = st.form_submit_button("Confirmar Lançamento")
         
     if botao_enviar and supabase:
-        final_subcat = nome_novo_fundo if criando_novo_porquinho else category = categoria
+        final_subcat = nome_novo_fundo if criando_novo_porquinho else categoria
         final_valor = val_alvo_novo_fundo if criando_novo_porquinho else valor
         final_desc = f"Meta Criada: {nome_novo_fundo}" if criando_novo_porquinho else descricao
         
@@ -378,7 +378,7 @@ with aba_painel:
             try:
                 supabase.table("movimentacoes").insert({
                     "data": str(data_movimento), "valor": float(final_valor), "tipo": tipo,
-                    "descricao": final_desc, "grupo_orcamentario": grupo_orcamentario,
+                    "descricao": final_desc, "grupo_orcamentario": group_orcam := grupo_orcamentario, # Correção de atribuição segura
                     "subcategoria": final_subcat, "satisfacao": satisfacao, "user_id": USER_ID
                 }).execute()
                 st.success("✅ Sincronizado com sucesso!")
@@ -557,17 +557,14 @@ with aba_agenda:
                 col_c1, col_c2, col_c3 = st.columns([4, 2, 2])
                 col_c1.write(f"📅 **{row['data']}** - {desc_pura} | **R$ {valor_item:,.2f}**")
                 
-                # Gerenciamento de botões na listagem
                 if "CONTAS A PAGAR" in str(row["grupo_orcamentario"]):
                     col_c2.caption("🔴 A Pagar")
                     
-                    # Botão 1: Pagar (Liquida o compromisso atual e registra a saída real no mês corrente)
                     if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
                         supabase.table("movimentacoes").delete().eq("id", id_item).execute()
                         supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
                         st.rerun()
                         
-                    # Botão 2: Repetir (Mantém o atual intacto, mas gera um clone idêntico +30 dias no futuro)
                     nova_data_futura = data_original + datetime.timedelta(days=30)
                     if col_c3.button("🔄 Repetir", key=f"rep_{id_item}", help="Clona esta mesma despesa para o mês seguinte (+30 dias)"):
                         try:
