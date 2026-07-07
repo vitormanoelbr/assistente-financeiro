@@ -118,10 +118,8 @@ st.sidebar.header("🏷️ Rastreamento Inteligente")
 tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #filho, #viagem").strip().lower()
 
 # --- PROCESSAMENTO LÓGICO ---
-renda_base_usuario = 2500.00  
-
-global_entradas = 0.0
-global_saidas_caixa = 0.0
+# ESCALABILIDADE: Renda padrão inicial zerada; ela será preenchida dinamicamente pelo banco
+renda_base_usuario = 0.0  
 
 faturamento_extra_mes = 0.0
 gastos_reais_mes = 0.0       
@@ -132,6 +130,7 @@ gastos_essencial = 0.0
 gastos_estilo = 0.0
 gastos_aporte_mes = 0.0
 gastos_negocio = 0.0
+gastos_dividas = 0.0
 
 agenda_a_pagar_mes = 0.0
 agenda_a_receber_mes = 0.0
@@ -153,6 +152,14 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
+            # 1. Captura dinâmica da Renda Base configurada no banco para o usuário logado
+            for item in res_data:
+                desc = item.get("descricao") or ""
+                subcat = item.get("subcategoria") or ""
+                if "[CONFIG_PERFIL]" in desc and "Renda Base Nativa" in subcat:
+                    renda_base_usuario = float(item["valor"] or 0.0)
+                    break
+
             for item in res_data:
                 grupo = item.get("grupo_orcamentario") or ""
                 subcat = item.get("subcategoria") or ""
@@ -161,9 +168,7 @@ if supabase:
                 desc = item.get("descricao") or ""
                 dt_item = pd.to_datetime(item["data"]).date()
                 
-                # Captura a Renda Base apenas para fins de configuração visual de limites
                 if "[CONFIG_PERFIL]" in desc and "Renda Base Nativa" in subcat:
-                    renda_base_usuario = val_mov
                     continue
                 
                 if "📅 AGENDA" in grupo:
@@ -174,19 +179,12 @@ if supabase:
                             agenda_a_receber_mes += val_mov
                     continue
                 
-                # Separação Lógica de Metas/Porquinhos para não misturar com o Caixa de Hoje
+                # Coleta de Metas Individuais (Porquinhos)
                 if "🚀 20% Aporte" in grupo:
                     if "Entrada" in tipo_mov or "Faturamento" in tipo_mov:
                         dicionario_metas_alvo[subcat] = val_mov
                     elif "Saída" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov:
                         dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
-                    continue # Não soma metas no saldo disponível em conta
-                
-                # Saldo Histórico Baseado puramente em Movimentações de Caixa Reais
-                if "Faturamento" in tipo_mov or "Receita" in tipo_mov or "Entrada" in tipo_mov:
-                    global_entradas += val_mov
-                elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "Saída" in tipo_mov or "[AJUSTE]" in desc:
-                    global_saidas_caixa += val_mov
 
             df_filtrado = df_todos_dados.copy()
             if not df_filtrado.empty:
@@ -234,6 +232,10 @@ if supabase:
                 if "Faturamento" in tipo_mov or "Receita" in tipo_mov or "Entrada" in tipo_mov:
                     faturamento_extra_mes += val
                 else:
+                    if "🚀 20% Aporte" in grupo_item:
+                        # Ignora saídas direcionadas a porquinhos no cálculo de despesas voluntárias do mês
+                        continue
+                    
                     gastos_reais_mes += val
                     if "💳" in tipo_mov or "Cartão" in tipo_mov:
                         fatura_acumulada_mes += val
@@ -244,10 +246,10 @@ if supabase:
                         gastos_essencial += val
                     elif "30% Estilo de Vida" in grupo_item:
                         gastos_estilo += val
-                    elif "20% Aporte" in grupo_item:
-                        gastos_aporte_mes += val
                     elif "💼 Custos de Negócio" in grupo_item:
                         gastos_negocio += val
+                    elif "📋 Quitação de Dívidas" in grupo_item:
+                        gastos_dividas += val
                     
     except Exception as e:
         if "JWT expired" in str(e) or "PGRST303" in str(e):
@@ -256,46 +258,22 @@ if supabase:
         else:
             st.error(f"Erro na validação de dados: {e}")
 
-# --- CONTROLE DE SALDO REAL ---
-saldo_real_exibido = global_entradas - global_saidas_caixa
+# --- 🎯 CÁLCULO DO SALDO VERDADEIRO (DEDUÇÃO AUTOMÁTICA) ---
+saldo_real_exibido = renda_base_usuario + faturamento_extra_mes - gastos_reais_mes
 
 st.sidebar.markdown("---")
-st.sidebar.header("⚙️ Sincronização de Saldos")
+st.sidebar.header("⚙️ Configurações do Usuário")
 
-novo_saldo_banco = st.sidebar.number_input("Saldo Real do seu Banco Hoje (R$):", min_value=-99999.0, value=saldo_real_exibido, step=10.0, format="%.2f")
-
-if st.sidebar.button("🔄 Conciliar com o Banco"):
-    discrepancia = novo_saldo_banco - saldo_real_exibido
-    if discrepancia != 0:
-        try:
-            if discrepancia > 0:
-                tipo_ajuste = "Faturamento ou Receita (Entrada)"
-                grupo_ajuste = "⚙️ CONFIGURAÇÃO"
-            else:
-                tipo_ajuste = "📱 Saída Dinheiro / Pix (Débito)"
-                grupo_ajuste = "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)"
-            
-            supabase.table("movimentacoes").insert({
-                "data": str(hoje), "valor": float(abs(discrepancia)), "tipo": tipo_ajuste,
-                "descricao": "[AJUSTE] Alinhamento de Saldo Real", "grupo_orcamentario": grupo_ajuste,
-                "subcategoria": "Ajuste de Saldo", "satisfacao": "3 - Indispensável", "user_id": USER_ID
-            }).execute()
-            st.sidebar.success("🎉 Ledger equilibrado com sucesso!")
-            st.rerun()
-        except Exception as e:
-            st.sidebar.error(f"Erro ao ajustar saldo: {e}")
-
-nova_renda_input = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=renda_base_usuario, step=50.0, format="%.2f")
-if st.sidebar.button("💾 Salvar Renda Base"):
+nova_renda_input = st.sidebar.number_input("Sua Renda Mensal Base (R$):", min_value=0.0, value=renda_base_usuario if renda_base_usuario > 0 else 2500.00, step=50.0, format="%.2f")
+if st.sidebar.button("💾 Salvar/Atualizar Renda Base"):
     try:
-        if not df_todos_dados.empty:
-            supabase.table("movimentacoes").delete().eq("subcategoria", "Renda Base Nativa").eq("user_id", USER_ID).execute()
+        supabase.table("movimentacoes").delete().eq("subcategoria", "Renda Base Nativa").eq("user_id", USER_ID).execute()
         supabase.table("movimentacoes").insert({
             "data": str(hoje), "valor": float(nova_renda_input), "tipo": "Faturamento ou Receita (Entrada)",
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
             "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
         }).execute()
-        st.sidebar.success("Renda salva!")
+        st.sidebar.success("Renda salva dinamicamente!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
@@ -346,11 +324,11 @@ aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", 
 with aba_painel:
     st.title("Meu Planner Financeiro")
     
-    st.markdown(f"### 👑 Movimentação de Caixa Real ({lista_meses[mes_selected_num]})")
+    st.markdown(f"### 👑 Gestão de Teto Orçamentário ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}")
-    c_caixa2.metric(label="💳 Cartão (A Vencer)", value=f"R$ {fatura_acumulada_mes:,.2f}")
-    c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}")
+    c_caixa1.metric(label="💰 Saldo Disponível (Orçamento)", value=f"R$ {saldo_real_exibido:,.2f}")
+    c_caixa2.metric(label="📈 Faturamento Extra Capturado", value=f"R$ {faturamento_extra_mes:,.2f}")
+    c_caixa3.metric(label="降低 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}")
 
     st.markdown("---")
     st.subheader("📊 Painel de Limites Orçamentários")
@@ -359,9 +337,8 @@ with aba_painel:
     st.progress(min(gastos_essencial / LIMITE_ESSENCIAL, 1.0) if LIMITE_ESSENCIAL > 0 else 0.0)
     st.write(f"🟡 **Estilo de Vida:** R$ {gastos_estilo:,.2f} de R$ {LIMITE_ESTILO_DE_VIDA:,.2f}")
     st.progress(min(gastos_estilo / LIMITE_ESTILO_DE_VIDA, 1.0) if LIMITE_ESTILO_DE_VIDA > 0 else 0.0)
-    st.write(f"🚀 **Aporte Mensal Realizado:** R$ {gastos_aporte_mes:,.2f} de R$ {META_APORTE_MENSAL:,.2f}")
-    st.progress(min(gastos_aporte_mes / META_APORTE_MENSAL, 1.0) if META_APORTE_MENSAL > 0 else 0.0)
-
+    st.write(f"📋 **Quitação de Dívidas Realizada:** R$ {gastos_dividas:,.2f}")
+    
     try:
         df_saidas = df_filtrado[df_filtrado["tipo"].str.contains("Saída|📱|💳", na=False)].copy()
         if not df_saidas.empty:
@@ -421,51 +398,6 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # ==================== RATEIO DE FATURA ====================
-    st.markdown("---")
-    st.subheader("💳 Rateio Rápido de Fatura Fechada")
-    with st.form("formulario_rateio_fatura", clear_on_submit=True):
-        col_f1, col_f2 = st.columns(2)
-        val_total_fatura = col_f1.number_input("Valor Total Pago na Fatura (R$):", min_value=0.0, step=0.01, format="%.2f")
-        data_fatura = col_f2.date_input("Data do Pagamento da Fatura:", datetime.date.today())
-        descricao_fatura = st.text_input("Identificação da Fatura:", placeholder="Ex: Fatura Nubank")
-        
-        col_r1, col_r2 = st.columns(2)
-        rateio_essencial = col_r1.number_input("🔴 Quanto foi Essencial (50%)? (R$)", min_value=0.0, step=0.01, format="%.2f")
-        rateio_estilo = col_r2.number_input("🟡 Quanto foi Estilo de Vida (30%)? (R$)", min_value=0.0, step=0.01, format="%.2f")
-        
-        col_r3, col_r4 = st.columns(2)
-        rateio_negocio = col_r3.number_input("💼 Quanto foi Custos de Negócio? (R$)", min_value=0.0, step=0.01, format="%.2f")
-        rateio_dividas = col_r4.number_input("📋 Quanto foi Quitação de Dívidas? (R$)", min_value=0.0, step=0.01, format="%.2f")
-        botao_enviar_rateio = st.form_submit_button("💥 Desmembrar e Sincronizar Fatura")
-
-    if botao_enviar_rateio and supabase:
-        soma_partes = rateio_essencial + rateio_estilo + rateio_negocio + rateio_dividas
-        if round(soma_partes, 2) != round(val_total_fatura, 2):
-            st.error(f"❌ A soma das categorias não bate com o valor total informado da fatura.")
-        else:
-            try:
-                inserts_pendentes = []
-                mapeamento_rateio = [
-                    {"valor": rateio_essencial, "grupo": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcat": "Contas Fixas (Luz, Água, Internet)"},
-                    {"valor": rateio_estilo, "grupo": "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)", "subcat": "Lazer, Bares & Restaurantes"},
-                    {"valor": rateio_negocio, "grupo": "💼 Custos de Negócio (Projetos e Clínica)", "subcat": "Infraestrutura & Custos Operacionais"},
-                    {"valor": rateio_dividas, "grupo": "📋 Quitação de Dívidas (Amortizações e Acordos)", "subcat": "Cartão de Crédito Atrasado"}
-                ]
-                for item in mapeamento_rateio:
-                    if item["valor"] > 0:
-                        inserts_pendentes.append({
-                            "data": str(data_fatura), "valor": float(item["valor"]), "tipo": "💳 Saída Cartão de Crédito",
-                            "descricao": f"{descricao_fatura} [Rateio]", "grupo_orcamentario": item["grupo"],
-                            "subcategoria": item["subcat"], "satisfacao": "3 - Indispensável", "user_id": USER_ID
-                        })
-                if inserts_pendentes:
-                    supabase.table("movimentacoes").insert(inserts_pendentes).execute()
-                    st.success(f"🎉 Fatura fragmentada com sucesso!")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Falha ao processar rateio: {e}")
-
     # Tabela Gerenciadora
     st.markdown("---")
     st.subheader("📋 Gerenciar Lançamentos do Período")
@@ -504,51 +436,15 @@ with aba_porquinhos:
             c3.metric(label="Quanto Falta", value=f"R$ {max(valor_alvo - guardado, 0.0):,.2f}")
             st.progress(min(guardado / valor_alvo, 1.0) if valor_alvo > 0 else 0.0)
             st.markdown("---")
-            
-    st.title("🚀 Estrada Estratégica Rumo ao 1 Milhão")
-    st.markdown(f"**💰 Seu Patrimônio Consolidado Atual:** R$ {total_patrimonio_guardado:,.2f}")
-    st.markdown(f"**📈 Seu Aporte Mensal Planejado (20%):** R$ {META_APORTE_MENSAL:,.2f} /mês")
-    
-    TAXA_MENSAL_LIQUIDA = 0.008 
-    degraus_objetivos = [
-        {"alvo": 10000.0, "name": "🧱 R$ 10k — Reserva de Segurança Base"},
-        {"alvo": 50000.0, "name": "🎯 R$ 50k — O Primeiro Impulso Real"},
-        {"alvo": 100000.0, "name": "💎 R$ 100k — O Lote de Elite Psicológico"},
-        {"alvo": 250000.0, "name": "🏰 R$ 250k — Um Quarto do Caminho"},
-        {"alvo": 500000.0, "name": "⚔️ R$ 500k — Meio Milhão (Reta Final)"},
-        {"alvo": 1000000.0, "name": "👑 R$ 1 Milhão — Liberdade Financeira Fundada"}
-    ]
-    
-    for degrau in degraus_objetivos:
-        alvo_valor = degrau["alvo"]
-        if total_patrimonio_guardado >= alvo_valor:
-            st.success(f"✅ **{degrau['name']}** — **CONQUISTADO!**")
-        else:
-            saldo_simulado = total_patrimonio_guardado
-            meses = 0
-            while saldo_simulado < alvo_valor and meses < 600:
-                saldo_simulado = (saldo_simulado * (1 + TAXA_MENSAL_LIQUIDA)) + META_APORTE_MENSAL
-                meses += 1
-            data_conquista = hoje + datetime.timedelta(days=int(meses * 30.41))
-            st.markdown(f"🔒 **{degrau['name']}**")
-            st.write(f"Faltam **{meses} meses** — Previsão: **{data_conquista.strftime('%B / %Y').capitalize()}**")
-            st.progress(min((total_patrimonio_guardado / alvo_valor), 1.0))
-        st.markdown("---")
 
 # ==================== ABA 3 (AGENDA) ====================
 with aba_agenda:
     st.title("📅 Agenda de Compromissos Financeiros")
     
     st.markdown("### 📊 Fluxo de Caixa Projetado da Agenda")
-    col_ag1, col_ag2, col_ag3 = st.columns(3)
-    col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pagar_mes:,.2f}")
+    col_ag1, col_ag2 = st.columns(2)
+    col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pay_mes if 'agenda_a_pay_mes' in locals() else agenda_a_pagar_mes:,.2f}")
     col_ag2.metric(label="🟢 Recebimentos Agendados", value=f"R$ {agenda_a_receber_mes:,.2f}")
-    
-    balanco_agenda = agenda_a_receber_mes - agenda_a_pagar_mes
-    if balanco_agenda >= 0:
-        col_ag3.metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Superávit de Compromissos")
-    else:
-        col_ag3.metric(label="⚖️ Saldo Isolado da Agenda", value=f"R$ {balanco_agenda:,.2f}", delta="Déficit de Compromissos", delta_color="inverse")
     
     st.markdown("---")
     col_agenda1, col_agenda2 = st.columns(2)
@@ -591,7 +487,7 @@ with aba_agenda:
                     col_c2.caption("🔴 A Pagar")
                     if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
                         supabase.table("movimentacoes").delete().eq("id", id_item).execute()
-                        supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
+                        supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria", "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
                         st.rerun()
                 else:
                     col_c2.caption("🟢 A Receber")
