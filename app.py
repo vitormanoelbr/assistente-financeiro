@@ -145,7 +145,6 @@ df_filtrado = pd.DataFrame()
 if supabase:
     try:
         supabase.postgrest.auth(st.session_state["user_token"])
-        # SEGURANÇA MÁXIMA: Filtro por USER_ID injetado diretamente na query do banco
         resposta_completa = supabase.table("movimentacoes").select("id, data, descricao, grupo_orcamentario, subcategoria, valor, satisfacao, tipo, user_id").eq("user_id", USER_ID).execute()
         
         if resposta_completa and hasattr(resposta_completa, 'data') and resposta_completa.data:
@@ -174,15 +173,15 @@ if supabase:
                             agenda_a_receber_mes += val_mov
                     continue
                 
-                # Saldo Histórico Isolado estritamente para o seu USER_ID
-                if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
+                # Saldo Histórico Acumulado (IGNORA AS LINHAS DE AGENDA)
+                if "Faturamento" in tipo_mov or "Receita" in tipo_mov or "Entrada" in tipo_mov:
                     global_entradas += val_mov
-                elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "[AJUSTE]" in desc:
+                elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "Saída" in tipo_mov or "[AJUSTE]" in desc:
                     global_saidas_caixa += val_mov
 
-                if "🚀 20% Aporte" in grupo and "Entrada" in tipo_mov:
+                if "🚀 20% Aporte" in grupo and ("Entrada" in tipo_mov or "Faturamento" in tipo_mov):
                     dicionario_metas_alvo[subcat] = val_mov
-                elif "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
+                elif "🚀 20% Aporte" in grupo and ("Saída" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov):
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
             df_filtrado = df_todos_dados.copy()
@@ -228,7 +227,7 @@ if supabase:
                 grupo_item = str(row["grupo_orcamentario"] or "")
                 tipo_mov = str(row.get("tipo") or "")
                 
-                if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
+                if "Faturamento" in tipo_mov or "Receita" in tipo_mov or "Entrada" in tipo_mov:
                     faturamento_extra_mes += val
                 else:
                     gastos_reais_mes += val
