@@ -173,7 +173,7 @@ if supabase:
                             agenda_a_receber_mes += val_mov
                     continue
                 
-                # O Saldo da conta Corrente SEMPRE acumula todo o histórico do banco de dados (Sem filtro de mês)
+                # Histórico Acumulado Completo para o Saldo Real
                 if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
                     global_entradas += val_mov
                 elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "[AJUSTE]" in desc:
@@ -193,7 +193,7 @@ if supabase:
                 df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
                 
                 def calcular_mes_fatura(linha):
-                    dt = linha["data_dt"]
+                    dt = line_dt = linha["data_dt"]
                     tipo_pgto = str(linha.get("tipo") or "")
                     if "💳" in tipo_pgto or "Cartão" in tipo_pgto:
                         if dt.day > 20:
@@ -213,7 +213,7 @@ if supabase:
 
             df_acumulado_mes_cheio = df_filtrado.copy()
 
-            if janela_tempo == "Últimos 7 Days" or janela_tempo == "Últimos 7 Dias":
+            if janela_tempo == "Últimos 7 Dias":
                 df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
@@ -240,7 +240,7 @@ if supabase:
                         gastos_essencial += val
                     elif "30% Estilo de Vida" in grupo_item:
                         gastos_estilo += val
-                    elif "20% Aporte" in group_item or "20% Aporte" in grupo_item:
+                    elif "20% Aporte" in grupo_item:  # CORRIGIDO DE group_item PARA grupo_item
                         gastos_aporte_mes += val
                     elif "💼 Custos de Negócio" in grupo_item:
                         gastos_negocio += val
@@ -253,7 +253,7 @@ if supabase:
             st.error(f"Erro na validação de dados: {e}")
 
 # --- CONTROLE DE SALDO REAL ---
-saldo_real_exibido = global_entradas - global_saidas_caixa
+saldo_real_exibido = global_entradas - global_saidas_ca_exibido = global_entradas - global_saidas_caixa
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Sincronização de Saldos")
@@ -291,7 +291,7 @@ if st.sidebar.button("💾 Salvar Renda Base"):
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
             "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
         }).execute()
-        st.success("Renda salva!")
+        st.sidebar.success("Renda salva!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
@@ -401,7 +401,7 @@ with aba_painel:
         botao_enviar = st.form_submit_button("Confirmar Lançamento")
         
     if botao_enviar and supabase:
-        final_subcat = nome_novo_fundo if criando_novo_porquinho else categoria
+        final_subcat = nome_novo_fundo if criando_novo_porquinho else category if 'category' in locals() else categoria
         final_valor = val_alvo_novo_fundo if criando_novo_porquinho else valor
         final_desc = f"Meta Criada: {nome_novo_fundo}" if criando_novo_porquinho else descricao
         
