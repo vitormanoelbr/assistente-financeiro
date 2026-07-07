@@ -149,7 +149,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # Captura de metadados de configuração e passivos
+            # Processamento de Configurações Globais e Metadados
             for item in res_data:
                 desc = str(item.get("descricao") or "")
                 subcat = str(item.get("subcategoria") or "")
@@ -185,14 +185,13 @@ if supabase:
                     elif "SAÍDA" in tipo_mov.upper() or "PIX" in tipo_mov.upper() or "DÉBITO" in tipo_mov.upper() or "📱" in tipo_mov or "💳" in tipo_mov:
                         dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
                 
-                if "QUITAÇÃO" in grupo.upper() or "DIVIDAS" in grupo.upper() or "📋" in group:
+                if "QUITAÇÃO" in grupo.upper() or "DIVIDAS" in grupo.upper() or "📋" in grupo:
                     if "SAÍDA" in tipo_mov.upper() or "📱" in tipo_mov or "💳" in tipo_mov:
                         amortizacoes_totais_historicas[subcat] = amortizacoes_totais_historicas.get(subcat, 0.0) + val_mov
 
-            # --- CONSTRUÇÃO DO REPOSITÓRIO FILTRADO ---
+            # --- CORREÇÃO DO FILTRO DE TEMPO REAL ---
             if not df_todos_dados.empty:
                 df_filtrado = df_todos_dados.copy()
-                
                 df_filtrado = df_filtrado[~df_filtrado["grupo_orcamentario"].astype(str).str.upper().str.contains("CONFIGURAC|CONFIGURAÇÃO|CONFIG", na=False)]
                 df_filtrado = df_filtrado[~df_filtrado["descricao"].astype(str).str.upper().str.contains("CONFIG_PERFIL|DIVIDA_ATIVA", na=False)]
                 df_filtrado = df_filtrado[~df_filtrado["grupo_orcamentario"].astype(str).str.upper().str.contains("AGENDA", na=False)]
@@ -201,24 +200,8 @@ if supabase:
                     df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
                     df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
                     
-                    def calcular_mes_fatura(linha):
-                        dt = linha["data_dt"]
-                        tipo_pgto = str(linha.get("tipo") or "")
-                        if "💳" in tipo_pgto or "CARTÃO" in tipo_pgto.upper():
-                            if dt.day > 20: 
-                                proximo_mes = dt.month + 1 if dt.month < 12 else 1
-                                proximo_ano = dt.year if dt.month < 12 else dt.year + 1
-                                return proximo_ano, proximo_mes
-                        return dt.year, dt.month
-
-                    df_filtrado[["ano_fatura", "mes_fatura"]] = df_filtrado.apply(
-                        lambda r: pd.Series(calcular_mes_fatura(r)), axis=1
-                    )
-                    
-                    df_filtrado = df_filtrado[
-                        ((df_filtrado["tipo"].astype(str).str.contains("💳|Cartão", na=False)) & (df_filtrado["ano_fatura"] == ano_selected) & (df_filtrado["mes_fatura"] == mes_selected_num)) |
-                        ((~df_filtrado["tipo"].astype(str).str.contains("💳|Cartão", na=False)) & (df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num))
-                    ]
+                    # Filtro estrito por mês do evento (Evita distorções de competência forçada)
+                    df_filtrado = df_filtrado[(df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num)]
 
             df_acumulado_mes_cheio = df_filtrado.copy()
 
@@ -231,7 +214,7 @@ if supabase:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
                 df_filtrado = df_filtrado[df_filtrado["descricao_lower"].str.contains(tag_busca, na=False)]
                 
-            # EXECUÇÃO DA ARQUITETURA CONTÁBIL PREMIUM (Separação Absoluta de Canais)
+            # --- CÁLCULO DA MATEMÁTICA LÍQUIDA SÓLIDA ---
             if not df_acumulado_mes_cheio.empty:
                 for _, row in df_acumulado_mes_cheio.iterrows():
                     val = float(row["valor"])
@@ -246,11 +229,13 @@ if supabase:
                         if "APORTE" in grupo_item or "🚀" in grupo_item:
                             continue
                         
+                        # Separação correta de fluxos de caixa imediato vs crédito
                         if "💳" in row.get("tipo") or "CARTÃO" in tipo_mov:
                             fatura_acumulada_mes += val
                         else:
                             gastos_dinheiro_caixa += val
                         
+                        # Agrupamento de limites orçamentários
                         if "ESSENCIAL" in grupo_item or "50%" in grupo_item:
                             gastos_essencial += val
                         elif "ESTILO" in grupo_item or "30%" in grupo_item:
@@ -267,7 +252,7 @@ if supabase:
         else:
             st.error(f"Erro no processamento dos dados: {e}")
 
-# --- ARQUITETURA DE MATEMÁTICA LÍQUIDA PREMIUM ---
+# --- ORIGENS DE VERDADE MATEMÁTICA ---
 saldo_real_exibido = renda_base_usuario + faturamento_extra_mes - gastos_dinheiro_caixa
 total_consumido_orcamento = gastos_dinheiro_caixa + fatura_acumulada_mes
 
@@ -335,19 +320,16 @@ aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
 with aba_painel:
     st.title("Meu Planner Financeiro")
     
-    # Hierarquia Visual de App Premium (Foco absoluto em clareza de caixa e extras)
     st.markdown(f"### 👑 Gestão de Teto Orçamentário ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Dinheiro físico disponível e líquido na sua conta bancária corrente hoje.")
-    c_caixa2.metric(label="📈 Faturamento Extra Capturado", value=f"R$ {faturamento_extra_mes:,.2f}", help="Total de receitas extras geradas e capturadas neste ciclo mensal.")
+    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Dinheiro físico disponível e líquido na sua conta corrente hoje.")
+    c_caixa2.metric(label="📈 Faturamento Extra Capturado", value=f"R$ {faturamento_extra_mes:,.2f}", help="Total de receitas extras geradas neste ciclo mensal.")
     c_caixa3.metric(label="📉 Limite Total Consumido", value=f"R$ {total_consumido_orcamento:,.2f}", help="O impacto total real que seu padrão de vida gerou no seu orçamento (Dinheiro + Cartão).")
 
-    # Linha Inteligente de Rastreamento de Cartão de Crédito Isolada (UX Líder de Mercado)
     st.markdown("---")
     col_cc_info1, col_cc_info2 = st.columns([2, 5])
-    col_cc_info1.write(f"💳 **Fatura Estimada:** R$ {fatura_acumulada_mes:,.2f}")
+    col_cc_info1.write(f"💳 **Fatura Acumulada:** R$ {fatura_acumulada_mes:,.2f}")
     
-    # Termômetro de risco do cartão de crédito sobre a renda fixa
     porcentagem_cartao_renda = (fatura_acumulada_mes / renda_base_usuario) if renda_base_usuario > 0 else 0.0
     col_cc_info2.progress(min(porcentagem_cartao_renda, 1.0))
     if porcentagem_cartao_renda > 0.5:
@@ -469,7 +451,7 @@ with aba_painel:
                 linhas_atuais_ids = set(dados_editados["ID"].dropna().astype(int).tolist())
                 linhas_originais_ids = set(df_editor["ID"].astype(int).tolist())
                 
-                for id_del in (linhas_originais_ids - linhas_atuais_ids):
+                for id_del in (linhas_originais_ids - lines_atuais_ids):
                     supabase.table("movimentacoes").delete().eq("id", id_del).execute()
                     
                 for _, row in dados_editados.iterrows():
