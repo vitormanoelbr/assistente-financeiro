@@ -193,7 +193,7 @@ if supabase:
                 df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
                 
                 def calcular_mes_fatura(linha):
-                    dt = line_dt = linha["data_dt"]
+                    dt = linha["data_dt"]
                     tipo_pgto = str(linha.get("tipo") or "")
                     if "💳" in tipo_pgto or "Cartão" in tipo_pgto:
                         if dt.day > 20:
@@ -240,7 +240,7 @@ if supabase:
                         gastos_essencial += val
                     elif "30% Estilo de Vida" in grupo_item:
                         gastos_estilo += val
-                    elif "20% Aporte" in grupo_item:  # CORRIGIDO DE group_item PARA grupo_item
+                    elif "20% Aporte" in grupo_item:
                         gastos_aporte_mes += val
                     elif "💼 Custos de Negócio" in grupo_item:
                         gastos_negocio += val
@@ -252,8 +252,8 @@ if supabase:
         else:
             st.error(f"Erro na validação de dados: {e}")
 
-# --- CONTROLE DE SALDO REAL ---
-saldo_real_exibido = global_entradas - global_saidas_ca_exibido = global_entradas - global_saidas_caixa
+# --- CONTROLE DE SALDO REAL CORRIGIDO ---
+saldo_real_exibido = global_entradas - global_saidas_caixa
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Sincronização de Saldos")
@@ -401,7 +401,7 @@ with aba_painel:
         botao_enviar = st.form_submit_button("Confirmar Lançamento")
         
     if botao_enviar and supabase:
-        final_subcat = nome_novo_fundo if criando_novo_porquinho else category if 'category' in locals() else categoria
+        final_subcat = nome_novo_fundo if criando_novo_porquinho else categoria
         final_valor = val_alvo_novo_fundo if criando_novo_porquinho else valor
         final_desc = f"Meta Criada: {nome_novo_fundo}" if criando_novo_porquinho else descricao
         
@@ -417,7 +417,7 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # ==================== RATEIO DE FATURA ====================
+# ==================== RATEIO DE FATURA ====================
     st.markdown("---")
     st.subheader("💳 Rateio Rápido de Fatura Fechada")
     with st.form("formulario_rateio_fatura", clear_on_submit=True):
