@@ -24,7 +24,6 @@ except Exception as e:
     st.error(f"Falha na conexão estrutural: {e}")
     st.stop()
 
-# --- FUNÇÃO AUXILIAR DE LOGOUT COMPLETO ---
 def deslogar_usuario():
     try:
         supabase.auth.sign_out()
@@ -35,7 +34,6 @@ def deslogar_usuario():
     st.query_params.clear()
     st.rerun()
 
-# --- 👤 GERENCIAMENTO NATIVO DE SESSÃO POR URL ---
 if "usuario_logado" not in st.session_state or st.session_state["usuario_logado"] is None:
     parametros_url = st.query_params
     if "uid" in parametros_url and "tok" in parametros_url:
@@ -120,9 +118,7 @@ tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #
 # --- VARIÁVEIS DE CONTROLE ACUMULADO ---
 renda_base_usuario = 0.0  
 faturamento_extra_mes = 0.0
-global_entradas = 0.0  
-gastos_reais_mes = 0.0       
-saidas_imediatas_caixa = 0.0 
+gastos_dinheiro_caixa = 0.0       
 fatura_acumulada_mes = 0.0   
 
 gastos_essencial = 0.0
@@ -153,7 +149,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # Varredura segura para extração de parâmetros estruturais
+            # Captura de metadados de configuração e passivos
             for item in res_data:
                 desc = str(item.get("descricao") or "")
                 subcat = str(item.get("subcategoria") or "")
@@ -189,7 +185,7 @@ if supabase:
                     elif "SAÍDA" in tipo_mov.upper() or "PIX" in tipo_mov.upper() or "DÉBITO" in tipo_mov.upper() or "📱" in tipo_mov or "💳" in tipo_mov:
                         dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
                 
-                if "QUITAÇÃO" in grupo.upper() or "DIVIDAS" in grupo.upper() or "📋" in grupo:
+                if "QUITAÇÃO" in grupo.upper() or "DIVIDAS" in grupo.upper() or "📋" in group:
                     if "SAÍDA" in tipo_mov.upper() or "📱" in tipo_mov or "💳" in tipo_mov:
                         amortizacoes_totais_historicas[subcat] = amortizacoes_totais_historicas.get(subcat, 0.0) + val_mov
 
@@ -209,7 +205,7 @@ if supabase:
                         dt = linha["data_dt"]
                         tipo_pgto = str(linha.get("tipo") or "")
                         if "💳" in tipo_pgto or "CARTÃO" in tipo_pgto.upper():
-                            if dt.day > 20: # Dia de fechamento padrão configurado
+                            if dt.day > 20: 
                                 proximo_mes = dt.month + 1 if dt.month < 12 else 1
                                 proximo_ano = dt.year if dt.month < 12 else dt.year + 1
                                 return proximo_ano, proximo_mes
@@ -235,6 +231,7 @@ if supabase:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
                 df_filtrado = df_filtrado[df_filtrado["descricao_lower"].str.contains(tag_busca, na=False)]
                 
+            # EXECUÇÃO DA ARQUITETURA CONTÁBIL PREMIUM (Separação Absoluta de Canais)
             if not df_acumulado_mes_cheio.empty:
                 for _, row in df_acumulado_mes_cheio.iterrows():
                     val = float(row["valor"])
@@ -245,16 +242,14 @@ if supabase:
                         if "APORTE" in grupo_item or "🚀" in grupo_item:
                             continue
                         faturamento_extra_mes += val
-                        global_entradas += val
                     else:
                         if "APORTE" in grupo_item or "🚀" in grupo_item:
                             continue
                         
-                        gastos_reais_mes += val
                         if "💳" in row.get("tipo") or "CARTÃO" in tipo_mov:
                             fatura_acumulada_mes += val
                         else:
-                            saidas_imediatas_caixa += val
+                            gastos_dinheiro_caixa += val
                         
                         if "ESSENCIAL" in grupo_item or "50%" in grupo_item:
                             gastos_essencial += val
@@ -272,8 +267,9 @@ if supabase:
         else:
             st.error(f"Erro no processamento dos dados: {e}")
 
-# --- 🎯 O SALDO VERDADEIRO POR DEDUÇÃO ---
-saldo_real_exibido = renda_base_usuario + faturamento_extra_mes - gastos_reais_mes
+# --- ARQUITETURA DE MATEMÁTICA LÍQUIDA PREMIUM ---
+saldo_real_exibido = renda_base_usuario + faturamento_extra_mes - gastos_dinheiro_caixa
+total_consumido_orcamento = gastos_dinheiro_caixa + fatura_acumulada_mes
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Configurações do Usuário")
@@ -339,11 +335,23 @@ aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
 with aba_painel:
     st.title("Meu Planner Financeiro")
     
+    # Hierarquia Visual de App Premium (Foco absoluto em clareza de caixa e extras)
     st.markdown(f"### 👑 Gestão de Teto Orçamentário ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="💰 Saldo Disponível (Orçamento)", value=f"R$ {saldo_real_exibido:,.2f}")
-    c_caixa2.metric(label="💳 Fatura Estimada Atual", value=f"R$ {fatura_acumulada_mes:,.2f}", help="Total acumulado em compras de cartão com vencimento neste ciclo orçamentário.")
-    c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}")
+    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Dinheiro físico disponível e líquido na sua conta bancária corrente hoje.")
+    c_caixa2.metric(label="📈 Faturamento Extra Capturado", value=f"R$ {faturamento_extra_mes:,.2f}", help="Total de receitas extras geradas e capturadas neste ciclo mensal.")
+    c_caixa3.metric(label="📉 Limite Total Consumido", value=f"R$ {total_consumido_orcamento:,.2f}", help="O impacto total real que seu padrão de vida gerou no seu orçamento (Dinheiro + Cartão).")
+
+    # Linha Inteligente de Rastreamento de Cartão de Crédito Isolada (UX Líder de Mercado)
+    st.markdown("---")
+    col_cc_info1, col_cc_info2 = st.columns([2, 5])
+    col_cc_info1.write(f"💳 **Fatura Estimada:** R$ {fatura_acumulada_mes:,.2f}")
+    
+    # Termômetro de risco do cartão de crédito sobre a renda fixa
+    porcentagem_cartao_renda = (fatura_acumulada_mes / renda_base_usuario) if renda_base_usuario > 0 else 0.0
+    col_cc_info2.progress(min(porcentagem_cartao_renda, 1.0))
+    if porcentagem_cartao_renda > 0.5:
+        st.caption("⚠️ *Aviso de Risco:* Sua fatura atual já compromete mais de 50% da sua renda base fixa.")
 
     st.markdown("---")
     st.subheader("📊 Painel de Limites Orçamentários")
@@ -381,7 +389,6 @@ with aba_painel:
         nome_novo_fundo = col_n1.text_input("Nome da Nova Meta:", placeholder="Ex: ✈️ Viagem")
         val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=50.0)
 
-    # Fluxo Inteligente para Detecção de Meio de Pagamento e Parcelamento
     tipo = st.radio("Fluxo Financeiro / Meio de Pagamento:", [
         "📱 Saída Dinheiro / Pix (Débito)", 
         "💳 Saída Cartão de Crédito", 
@@ -411,19 +418,15 @@ with aba_painel:
         if valor > 0 and final_desc:
             try:
                 if is_parcelado and final_tipo == "💳 Saída Cartão de Crédito":
-                    # Motor de Projeção de Futuro: Cria ramificações mensais automáticas no banco de dados
                     base_date = data_movimento
                     for i in range(num_parcelas):
-                        # Calcula a soma dos meses subsequentes com segurança matemática
                         num_months = base_date.month - 1 + i
                         year_offset = num_months // 12
                         month_offset = (num_months % 12) + 1
                         
-                        # Tenta manter o mesmo dia, ajustando se estourar os dias do mês de destino
                         try:
                             parcel_date = datetime.date(base_date.year + year_offset, month_offset, base_date.day)
                         except ValueError:
-                            # Se cair num dia inexistente (Ex: 31 de Fevereiro), joga pro último dia do mês
                             next_month_start = datetime.date(base_date.year + year_offset, month_offset + 1, 1) if month_offset < 12 else datetime.date(base_date.year + year_offset + 1, 1, 1)
                             parcel_date = next_month_start - datetime.timedelta(days=1)
                         
@@ -434,14 +437,13 @@ with aba_painel:
                             "subcategoria": final_subcat, "satisfacao": satisfacao, "user_id": USER_ID
                         }).execute()
                 else:
-                    # Lançamento Simples tradicional
                     supabase.table("movimentacoes").insert({
                         "data": str(data_movimento), "valor": float(valor), "tipo": final_tipo,
                         "descricao": final_desc, "grupo_orcamentario": grupo_orcamentario,
                         "subcategoria": final_subcat, "satisfacao": satisfacao, "user_id": USER_ID
                     }).execute()
                     
-                st.success("✅ Lançamento computado e distribuído no tempo com estabilidade!")
+                st.success("✅ Lançamento computado perfeitamente!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar movimentação: {e}")
@@ -568,7 +570,6 @@ with aba_agenda:
 # ==================== ABA 4 (GESTÃO DE DÍVIDAS) ====================
 with aba_dividas:
     st.title("📋 Controle Estrutural de Passivos e Dívidas")
-    st.caption("Gerenciamento de contas consolidadas de longo prazo de forma simplificada.")
     
     divida_bruta_total = sum([d["valor_original"] for d in lista_dividas_cadastradas])
     total_amortizado_historico = sum(amortizacoes_totais_historicas.values())
@@ -583,16 +584,16 @@ with aba_dividas:
     c_div3.metric(label="✅ Total Amortizado", value=f"R$ {total_amortizado_historico:,.2f}")
     
     if indice_comprometimento > 30.0:
-        st.error(f"⚠️ Atenção Crítica: Suas parcelas de passivos consomem {indice_comprometimento:.1f}% da sua Renda. Recomenda-se ajustar o planejamento.")
+        st.error(f"⚠️ Atenção Crítica: Suas parcelas de passivos consomem {indice_comprometimento:.1f}% da sua Renda.")
     elif indice_comprometimento > 0:
-        st.warning(f"⚡ Atenção: {indice_comprometimento:.1f}% da sua renda está comprometida com o pagamento de dívidas.")
+        st.warning(f"⚡ Atenção: {indice_comprometimento:.1f}% da sua renda está comprometida com dívidas.")
 
     st.markdown("---")
     st.subheader("🚀 Cadastrar Nova Dívida Estrutural")
     with st.form("form_cadastro_divida_passiva", clear_on_submit=True):
         col_d1, col_d2, col_d3 = st.columns(3)
-        nome_credor = col_d1.text_input("Nome da Dívida / Credor:", placeholder="Ex: Empréstimo Banco X")
-        saldo_devedor_inicial = col_d2.number_input("Valor Total Atual da Dívida (R$):", min_value=0.0, step=100.0)
+        nome_credor = col_d1.text_input("Nome da Dívida / Credor:")
+        saldo_devedor_inicial = col_d2.number_input("Valor Total Atual (R$):", min_value=0.0, step=100.0)
         valor_parcela_mensal = col_d3.number_input("Valor da Parcela Mensal (R$):", min_value=0.0, step=10.0)
         
         if st.form_submit_button("Registrar Passivo no Sistema") and nome_credor and saldo_devedor_inicial > 0:
@@ -602,7 +603,7 @@ with aba_dividas:
                     "descricao": "[DIVIDA_ATIVA] Registro de Passivo Estrutural", "grupo_orcamentario": "📋 QUITAÇÃO DE DÍVIDAS (ATIVO)",
                     "subcategoria": nome_credor, "satisfacao": f"{valor_parcela_mensal} - Parcela Cadastrada", "user_id": USER_ID
                 }).execute()
-                st.success("✅ Dívida estrutural integrada com sucesso!")
+                st.success("✅ Dívida estrutural integrada!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao registrar passivo: {e}")
