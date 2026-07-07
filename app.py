@@ -344,7 +344,7 @@ MAPA_CATEGORIAS = {
     ]
 }
 
-# Configuração correta de Abas
+# Configuração estável de Abas Separadas
 aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", "🐷 Meus Porquinhos & Rumo ao Milhão", "📅 Agenda de Compromissos"])
 
 # ==================== ABA 1 ====================
@@ -483,7 +483,7 @@ with aba_painel:
             try:
                 linhas_atuais_ids = set(dados_editados["ID"].tolist())
                 linhas_originais_ids = set(df_editor["ID"].tolist())
-                for id_del in (linhas_originais_ids - lines_atuais_ids if 'lines_atuais_ids' in locals() else linhas_originais_ids - linhas_atuais_ids):
+                for id_del in (linhas_originais_ids - linhas_atuais_ids):
                     supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
                 for _, row in dados_editados.iterrows():
                     row_id = int(row["ID"])
