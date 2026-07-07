@@ -118,7 +118,6 @@ st.sidebar.header("🏷️ Rastreamento Inteligente")
 tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #filho, #viagem").strip().lower()
 
 # --- PROCESSAMENTO LÓGICO ---
-# ESCALABILIDADE: Renda padrão inicial zerada; ela será preenchida dinamicamente pelo banco
 renda_base_usuario = 0.0  
 
 faturamento_extra_mes = 0.0
@@ -152,7 +151,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. Captura dinâmica da Renda Base configurada no banco para o usuário logado
+            # Captura dinâmica da Renda Base configurada no banco
             for item in res_data:
                 desc = item.get("descricao") or ""
                 subcat = item.get("subcategoria") or ""
@@ -185,6 +184,13 @@ if supabase:
                         dicionario_metas_alvo[subcat] = val_mov
                     elif "Saída" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov:
                         dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
+                    continue
+
+                # Saldo Histórico Baseado em Movimentações de Caixa Reais
+                if "Faturamento" in tipo_mov or "Receita" in tipo_mov or "Entrada" in tipo_mov:
+                    global_entradas += val_mov
+                elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "Saída" in tipo_mov or "[AJUSTE]" in desc:
+                    global_saidas_caixa += val_mov
 
             df_filtrado = df_todos_dados.copy()
             if not df_filtrado.empty:
@@ -195,7 +201,7 @@ if supabase:
                 df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
                 
                 def calcular_mes_fatura(linha):
-                    dt = linha["data_dt"]
+                    dt = pointer = linha["data_dt"]
                     tipo_pgto = str(linha.get("tipo") or "")
                     if "💳" in tipo_pgto or "Cartão" in tipo_pgto:
                         if dt.day > 20:
@@ -233,7 +239,6 @@ if supabase:
                     faturamento_extra_mes += val
                 else:
                     if "🚀 20% Aporte" in grupo_item:
-                        # Ignora saídas direcionadas a porquinhos no cálculo de despesas voluntárias do mês
                         continue
                     
                     gastos_reais_mes += val
@@ -328,7 +333,7 @@ with aba_painel:
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
     c_caixa1.metric(label="💰 Saldo Disponível (Orçamento)", value=f"R$ {saldo_real_exibido:,.2f}")
     c_caixa2.metric(label="📈 Faturamento Extra Capturado", value=f"R$ {faturamento_extra_mes:,.2f}")
-    c_caixa3.metric(label="降低 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}")
+    c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}")
 
     st.markdown("---")
     st.subheader("📊 Painel de Limites Orçamentários")
@@ -354,7 +359,7 @@ with aba_painel:
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação Realizada")
     grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_main")
-    categoria = st.selectbox("Subcategoria Correspondente:", MAPA_CATEGORIAS[grupo_orcamentario], key="sub_main")
+    categoria = st.selectbox("Subcategoria Corresponding:", MAPA_CATEGORIAS[grupo_orcamentario], key="sub_main")
 
     criando_novo_porquinho = (categoria == "➕ [Criar Nova Meta / Porquinho]")
     nome_novo_fundo = ""
@@ -443,7 +448,7 @@ with aba_agenda:
     
     st.markdown("### 📊 Fluxo de Caixa Projetado da Agenda")
     col_ag1, col_ag2 = st.columns(2)
-    col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pay_mes if 'agenda_a_pay_mes' in locals() else agenda_a_pagar_mes:,.2f}")
+    col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pagar_mes:,.2f}")
     col_ag2.metric(label="🟢 Recebimentos Agendados", value=f"R$ {agenda_a_receber_mes:,.2f}")
     
     st.markdown("---")
@@ -487,7 +492,8 @@ with aba_agenda:
                     col_c2.caption("🔴 A Pagar")
                     if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
                         supabase.table("movimentacoes").delete().eq("id", id_item).execute()
-                        supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria", "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
+                        # CORRIGIDO: Modificado de vírgula para dois pontos na subcategoria
+                        supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
                         st.rerun()
                 else:
                     col_c2.caption("🟢 A Receber")
