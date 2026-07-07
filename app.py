@@ -169,11 +169,11 @@ if supabase:
                     if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
                         if "📅 AGENDA: CONTAS A PAGAR" in grupo:
                             agenda_a_pagar_mes += val_mov
-                        elif "📅 AGENDA: CONTAS A RECEBER" in grupo:
+                        elif "📅 AGENDA: CONTAS A RECEBER" in group or "📅 AGENDA: CONTAS A RECEBER" in grupo:
                             agenda_a_receber_mes += val_mov
                     continue
                 
-                # Histórico Acumulado Completo para o Saldo Real
+                # Saldo Histórico Acumulado Completo
                 if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
                     global_entradas += val_mov
                 elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "[AJUSTE]" in desc:
@@ -252,7 +252,7 @@ if supabase:
         else:
             st.error(f"Erro na validação de dados: {e}")
 
-# --- CONTROLE DE SALDO REAL CORRIGIDO ---
+# --- CONTROLE DE SALDO REAL ---
 saldo_real_exibido = global_entradas - global_saidas_caixa
 
 st.sidebar.markdown("---")
@@ -417,7 +417,7 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-# ==================== RATEIO DE FATURA ====================
+    # ==================== RATEIO DE FATURA ====================
     st.markdown("---")
     st.subheader("💳 Rateio Rápido de Fatura Fechada")
     with st.form("formulario_rateio_fatura", clear_on_submit=True):
