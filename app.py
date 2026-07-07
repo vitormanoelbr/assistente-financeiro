@@ -127,7 +127,6 @@ fatura_acumulada_mes = 0.0
 
 gastos_essencial = 0.0
 gastos_estilo = 0.0
-gastos_aporte_mes = 0.0
 gastos_negocio = 0.0
 gastos_dividas = 0.0
 
@@ -151,7 +150,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # Captura dinâmica da Renda Base configurada no banco
+            # 1. Pega dinamicamente a renda guardada na linha de configuração do banco
             for item in res_data:
                 desc = item.get("descricao") or ""
                 subcat = item.get("subcategoria") or ""
@@ -178,19 +177,12 @@ if supabase:
                             agenda_a_receber_mes += val_mov
                     continue
                 
-                # Coleta de Metas Individuais (Porquinhos)
+                # Metas e Porquinhos isolados da conta do caixa principal
                 if "🚀 20% Aporte" in grupo:
                     if "Entrada" in tipo_mov or "Faturamento" in tipo_mov:
                         dicionario_metas_alvo[subcat] = val_mov
                     elif "Saída" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov:
                         dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
-                    continue
-
-                # Saldo Histórico Baseado em Movimentações de Caixa Reais
-                if "Faturamento" in tipo_mov or "Receita" in tipo_mov or "Entrada" in tipo_mov:
-                    global_entradas += val_mov
-                elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "Saída" in tipo_mov or "[AJUSTE]" in desc:
-                    global_saidas_caixa += val_mov
 
             df_filtrado = df_todos_dados.copy()
             if not df_filtrado.empty:
@@ -201,7 +193,7 @@ if supabase:
                 df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
                 
                 def calcular_mes_fatura(linha):
-                    dt = pointer = linha["data_dt"]
+                    dt = linha["data_dt"]
                     tipo_pgto = str(linha.get("tipo") or "")
                     if "💳" in tipo_pgto or "Cartão" in tipo_pgto:
                         if dt.day > 20:
@@ -236,6 +228,8 @@ if supabase:
                 tipo_mov = str(row.get("tipo") or "")
                 
                 if "Faturamento" in tipo_mov or "Receita" in tipo_mov or "Entrada" in tipo_mov:
+                    if "🚀 20% Aporte" in grupo_item:
+                        continue
                     faturamento_extra_mes += val
                 else:
                     if "🚀 20% Aporte" in grupo_item:
@@ -263,7 +257,7 @@ if supabase:
         else:
             st.error(f"Erro na validação de dados: {e}")
 
-# --- 🎯 CÁLCULO DO SALDO VERDADEIRO (DEDUÇÃO AUTOMÁTICA) ---
+# --- 🎯 O SALDO VERDADEIRO POR DEDUÇÃO ---
 saldo_real_exibido = renda_base_usuario + faturamento_extra_mes - gastos_reais_mes
 
 st.sidebar.markdown("---")
@@ -278,7 +272,7 @@ if st.sidebar.button("💾 Salvar/Atualizar Renda Base"):
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
             "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
         }).execute()
-        st.sidebar.success("Renda salva dinamicamente!")
+        st.sidebar.success("Renda salva!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
@@ -359,7 +353,7 @@ with aba_painel:
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação Realizada")
     grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_main")
-    categoria = st.selectbox("Subcategoria Corresponding:", MAPA_CATEGORIAS[grupo_orcamentario], key="sub_main")
+    categoria = st.selectbox("Subcategoria Correspondente:", MAPA_CATEGORIAS[grupo_orcamentario], key="sub_main")
 
     criando_novo_porquinho = (categoria == "➕ [Criar Nova Meta / Porquinho]")
     nome_novo_fundo = ""
@@ -492,7 +486,6 @@ with aba_agenda:
                     col_c2.caption("🔴 A Pagar")
                     if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
                         supabase.table("movimentacoes").delete().eq("id", id_item).execute()
-                        # CORRIGIDO: Modificado de vírgula para dois pontos na subcategoria
                         supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
                         st.rerun()
                 else:
