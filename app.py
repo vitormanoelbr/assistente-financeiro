@@ -169,7 +169,7 @@ if supabase:
                     if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
                         if "📅 AGENDA: CONTAS A PAGAR" in grupo:
                             agenda_a_pagar_mes += val_mov
-                        elif "📅 AGENDA: CONTAS A RECEBER" in group or "📅 AGENDA: CONTAS A RECEBER" in grupo:
+                        elif "📅 AGENDA: CONTAS A RECEBER" in grupo:  # CORRIGIDO DE group PARA grupo
                             agenda_a_receber_mes += val_mov
                     continue
                 
@@ -273,7 +273,7 @@ if st.sidebar.button("🔄 Conciliar com o Banco"):
             
             supabase.table("movimentacoes").insert({
                 "data": str(hoje), "valor": float(abs(discrepancia)), "tipo": tipo_ajuste,
-                "descricao": "[AJUSTE] Alinhamento de Saldo Real", "grupo_orcamentario": grupo_ajuste,
+                "descricao": "[AJUSTE] Alinhamento de Saldo Real", "grupo_orcamentario": group_ajuste if 'group_ajuste' in locals() else grupo_ajuste,
                 "subcategoria": "Ajuste de Saldo", "satisfacao": "3 - Indispensável", "user_id": USER_ID
             }).execute()
             st.sidebar.success("🎉 Ledger equilibrado com sucesso!")
