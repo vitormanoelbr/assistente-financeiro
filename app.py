@@ -137,7 +137,6 @@ agenda_a_receber_mes = 0.0
 dicionario_metas_alvo = {}
 dicionario_aportes_acumulados = {}
 
-# Estrutura lógica de dívidas
 lista_dividas_cadastradas = []
 amortizacoes_totais_historicas = {}
 
@@ -184,28 +183,31 @@ if supabase:
                     })
                     continue
                 
-                if "📅 AGENDA" in grupo:
+                if "📅 AGENDA" in grupo or "AGENDA" in grupo:
                     if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
-                        if "📅 AGENDA: CONTAS A PAGAR" in grupo:
+                        if "CONTAS A PAGAR" in grupo:
                             agenda_a_pagar_mes += val_mov
-                        elif "📅 AGENDA: CONTAS A RECEBER" in grupo:
+                        elif "CONTAS A RECEBER" in grupo:
                             agenda_a_receber_mes += val_mov
                     continue
                 
-                if "🚀 20% Aporte" in grupo:
+                if "🚀 20% Aporte" in grupo or "Aporte" in grupo:
                     if "Entrada" in tipo_mov or "Faturamento" in tipo_mov:
                         dicionario_metas_alvo[subcat] = val_mov
                     elif "Saída" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov:
                         dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
                 
                 # Mapeamento histórico de amortizações de dívidas reais executadas
-                if "📋 Quitação de Dívidas" in grupo and ("Saída" in tipo_mov or "📱" in tipo_mov or "💳" in tipo_mov):
-                    amortizacoes_totais_historicas[subcat] = amortizacoes_totais_historicas.get(subcat, 0.0) + val_mov
+                if "Quitação de Dívidas" in grupo or "📋" in grupo:
+                    if "Saída" in tipo_mov or "📱" in tipo_mov or "💳" in tipo_mov:
+                        amortizacoes_totais_historicas[subcat] = amortizacoes_totais_historicas.get(subcat, 0.0) + val_mov
 
+            # --- CONSTRUÇÃO DO FILTRADO DO PERÍODO ---
             df_filtrado = df_todos_dados.copy()
             if not df_filtrado.empty:
-                df_filtrado = df_filtrado[~df_filtrado["grupo_orcamentario"].str.contains("CONFIGURAC", na=False)]
-                df_filtrado = df_filtrado[~df_filtrado["descricao"].str.contains("CONFIG_PERFIL|[DIVIDA_ATIVA]", na=False)]
+                # Remove apenas o que for estritamente configuração ou a declaração estrutural da dívida ativa
+                df_filtrado = df_filtrado[~df_filtrado["grupo_orcamentario"].str.contains("CONFIGURAC|CONFIGURAÇÃO", na=False, case=False)]
+                df_filtrado = df_filtrado[~df_filtrado["descricao"].str.contains("CONFIG_PERFIL|[DIVIDA_ATIVA]", na=False, case=False)]
                 
                 if not df_filtrado.empty:
                     df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
@@ -232,7 +234,7 @@ if supabase:
 
             df_acumulado_mes_cheio = df_filtrado.copy()
 
-            if janela_tempo == "Últimos 7 Days" and not df_filtrado.empty:
+            if janela_tempo == "Últimos 7 Dias" and not df_filtrado.empty:
                 df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
             elif janela_tempo == "Somente Hoje" and not df_filtrado.empty:
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
@@ -247,16 +249,17 @@ if supabase:
                     grupo_item = str(row["grupo_orcamentario"] or "")
                     tipo_mov = str(row.get("tipo") or "")
                     
-                    if "📅 AGENDA" in grupo_item:
+                    # Ignora a agenda no cálculo do teto financeiro real
+                    if "AGENDA" in grupo_item or "📅" in grupo_item:
                         continue
                         
                     if "Faturamento" in tipo_mov or "Receita" in tipo_mov or "Entrada" in tipo_mov:
-                        if "🚀 20% Aporte" in grupo_item:
+                        if "Aporte" in grupo_item or "🚀" in grupo_item:
                             continue
                         faturamento_extra_mes += val
                         global_entradas += val
                     else:
-                        if "🚀 20% Aporte" in grupo_item:
+                        if "Aporte" in grupo_item or "🚀" in grupo_item:
                             continue
                         
                         gastos_reais_mes += val
@@ -265,13 +268,13 @@ if supabase:
                         else:
                             saidas_imediatas_caixa += val
                         
-                        if "50% Essencial" in grupo_item:
+                        if "Essencial" in grupo_item or "50%" in grupo_item:
                             gastos_essencial += val
-                        elif "30% Estilo de Vida" in grupo_item:
+                        elif "Estilo" in grupo_item or "30%" in grupo_item:
                             gastos_estilo += val
-                        elif "💼 Custos de Negócio" in grupo_item:
+                        elif "Negócio" in grupo_item or "💼" in grupo_item:
                             gastos_negocio += val
-                        elif "📋 Quitação de Dívidas" in grupo_item:
+                        elif "Dívidas" in grupo_item or "📋" in grupo_item:
                             gastos_dividas += val
                         
     except Exception as e:
@@ -305,7 +308,6 @@ LIMITE_ESSENCIAL = renda_base_usuario * 0.50
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
 META_APORTE_MENSAL = renda_base_usuario * 0.20           
 
-# Mapeia dinamicamente os nomes de dívidas estruturais ativos para as categorias de lançamento
 lista_nomes_dividas = [d["nome"] for d in lista_dividas_cadastradas] if lista_dividas_cadastradas else ["Empréstimos Bancários", "Cartão de Crédito Atrasado"]
 
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
@@ -367,7 +369,7 @@ with aba_painel:
     try:
         df_saidas = df_filtrado[df_filtrado["tipo"].str.contains("Saída|📱|💳", na=False)].copy()
         if not df_saidas.empty:
-            df_saidas = df_saidas[~df_saidas["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)]
+            df_saidas = df_saidas[~df_saidas["grupo_orcamentario"].str.contains("AGENDA", na=False, case=False)]
             
             if not df_saidas.empty:
                 st.markdown("---")
@@ -382,7 +384,7 @@ with aba_painel:
     st.markdown("---")
     st.subheader("📥 Registrar Movimentação Realizada")
     grupo_orcamentario = st.selectbox("Destinação Estratégica do Valor:", list(MAPA_CATEGORIAS.keys()), key="grupo_main")
-    categoria = st.selectbox("Subcategoria Correspondente:", MAPA_CATEGORIAS[grupo_orcamentario], key="sub_main")
+    categoria = st.selectbox("Subcategoria Corresponding:", MAPA_CATEGORIAS[grupo_orcamentario], key="sub_main")
 
     criando_novo_porquinho = (categoria == "➕ [Criar Nova Meta / Porquinho]")
     nome_novo_fundo = ""
@@ -426,10 +428,13 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
+    # --- 📋 SEÇÃO RESTAURADA DA TABELA ---
     st.markdown("---")
     st.subheader("📋 Gerenciar Lançamentos do Período")
     if supabase and not df_filtrado.empty:
-        df_historico_real = df_filtrado[~df_filtrado["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
+        # Filtro reverso e seguro: remove apenas a agenda para exibir todo o resto do histórico real
+        df_historico_real = df_filtrado[~df_filtrado["grupo_orcamentario"].str.contains("AGENDA", na=False, case=False)].copy()
+        
         if not df_historico_real.empty:
             df_editor = df_historico_real[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
             df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Meio / Tipo"]
@@ -448,6 +453,8 @@ with aba_painel:
                     st.rerun()
                 except Exception as e:
                     st.error(f"Erro: {e}")
+        else:
+            st.info("Nenhum lançamento real efetuado neste período para exibição.")
 
 # ==================== ABA 2 (PORQUINHOS) ====================
 with aba_porquinhos:
@@ -500,7 +507,7 @@ with aba_agenda:
     st.markdown("---")
     st.subheader("📋 Seus Compromissos Mapeados")
     if supabase and not df_todos_dados.empty:
-        df_agenda_pura = df_todos_dados[df_todos_dados["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
+        df_agenda_pura = df_todos_dados[df_todos_dados["grupo_orcamentario"].str.contains("AGENDA", na=False, case=False)].copy()
         if not df_agenda_pura.empty:
             df_agenda_pura = df_agenda_pura.sort_values(by="data")
             
@@ -512,7 +519,7 @@ with aba_agenda:
                 col_c1, col_c2, col_c3 = st.columns([4, 2, 2])
                 col_c1.write(f"📅 **{row['data']}** - {desc_pura} | **R$ {valor_item:,.2f}**")
                 
-                if "CONTAS A PAGAR" in str(row["grupo_orcamentario"]):
+                if "CONTAS A PAGAR" in str(row["grupo_orcamentario"]).upper():
                     col_c2.caption("🔴 A Pagar")
                     if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
                         supabase.table("movimentacoes").delete().eq("id", id_item).execute()
@@ -525,12 +532,11 @@ with aba_agenda:
                         supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "Faturamento ou Receita (Entrada)", "descricao": f"{desc_pura} (Recebido)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
                         st.rerun()
 
-# ==================== ABA 4 (NOVA: GESTÃO DE DÍVIDAS) ====================
+# ==================== ABA 4 (GESTÃO DE DÍVIDAS) ====================
 with aba_dividas:
     st.title("📋 Controle Estrutural de Passivos e Dívidas")
     st.caption("Gerenciamento inteligente e consolidado de contas de longo prazo nos moldes dos grandes bancos.")
     
-    # 1. Cálculos de Alto Nível para Diagnóstico de UX
     divida_bruta_total = sum([d["valor_original"] for d in lista_dividas_cadastradas])
     total_amortizado_historico = sum(amortizacoes_totais_historicas.values())
     divida_restante_real = max(divida_bruta_total - total_amortizado_historico, 0.0)
@@ -538,21 +544,17 @@ with aba_dividas:
     comprometimento_parcelas_mensais = sum([d["parcela"] for d in lista_dividas_cadastradas])
     indice_comprometimento = (comprometimento_parcelas_mensais / renda_base_usuario * 100) if renda_base_usuario > 0 else 0.0
 
-    # Exibição dos cards estruturais como os grandes bancos
     c_div1, c_div2, c_div3 = st.columns(3)
     c_div1.metric(label="🚨 Saldo Devedor Restante", value=f"R$ {divida_restante_real:,.2f}")
-    c_div2.metric(label="📉 Comprometimento de Renda", value=f"{indice_comprometimento:.1f}%", help="Porcentagem da sua renda base consumida pelo pagamento das parcelas atuais.")
+    c_div2.metric(label="📉 Comprometimento de Renda", value=f"{indice_comprometimento:.1f}%")
     c_div3.metric(label="✅ Total Amortizado", value=f"R$ {total_amortizado_historico:,.2f}")
     
-    # Alerta visual inteligente de risco baseado em grandes bancos
     if indice_comprometimento > 30.0:
-        st.error(f"⚠️ Atenção Crítica: Suas parcelas consomem {indice_comprometimento:.1f}% da sua Renda Fixa. O recomendado pelo Banco Central é manter este índice abaixo de 30%.")
+        st.error(f"⚠️ Atenção Crítica: Suas parcelas consomem {indice_comprometimento:.1f}% da sua Renda Fixa. O recomendado é manter este índice abaixo de 30%.")
     elif indice_comprometimento > 0:
-        st.warning(f"⚡ Atenção Moderada: {indice_comprometimento:.1f}% da sua renda está comprometida com dívidas. Monitore novos parcelamentos.")
+        st.warning(f"⚡ Atenção Moderada: {indice_comprometimento:.1f}% da sua renda está comprometida com dívidas.")
 
     st.markdown("---")
-    
-    # 2. Formulário Seguro de Cadastro de Nova Dívida Ativa
     st.subheader("🚀 Cadastrar Nova Dívida Estrutural")
     with st.form("form_cadastro_divida_passiva", clear_on_submit=True):
         col_d1, col_d2, col_d3 = st.columns(3)
@@ -562,8 +564,6 @@ with aba_dividas:
         
         if st.form_submit_button("Registrar Passivo no Sistema") and nome_credor and saldo_devedor_inicial > 0:
             try:
-                # Salva o passivo com a tag especial [DIVIDA_ATIVA]
-                # Armazenamos o valor da parcela de forma segura dentro do campo 'satisfacao' para leitura posterior
                 supabase.table("movimentacoes").insert({
                     "data": str(hoje), "valor": float(saldo_devedor_inicial), "tipo": "📱 Saída Dinheiro / Pix (Débito)",
                     "descricao": "[DIVIDA_ATIVA] Registro de Passivo Estrutural", "grupo_orcamentario": "📋 QUITAÇÃO DE DÍVIDAS (ATIVO)",
@@ -574,7 +574,6 @@ with aba_dividas:
             except Exception as e:
                 st.error(f"Erro ao registrar passivo: {e}")
 
-    # 3. Listagem Dinâmica com Barras de Progresso e Botões de Ação Directa
     if lista_dividas_cadastradas:
         st.markdown("---")
         st.subheader("📊 Evolução e Quitação dos Seus Passivos")
@@ -594,7 +593,6 @@ with aba_dividas:
             progresso = min(pago / original, 1.0) if original > 0 else 0.0
             st.progress(progresso)
             
-            # Botão de Ação Direta para Excluir/Quitar Dívida do Histórico
             if st.button(f"🗑️ Remover Registro da Dívida: {nome}", key=f"del_div_{divida['id']}"):
                 try:
                     supabase.table("movimentacoes").delete().eq("id", divida["id"]).execute()
