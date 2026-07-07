@@ -320,11 +320,12 @@ MAPA_CATEGORIAS = {
     "💼 Custos de Negócio (Projetos e Clínica)": ["Ferramentas SaaS & Softwares", "Marketing & Anúncios", "Infraestrutura & Custos Operacionais"]
 }
 
+# Criando as abas nativas
 aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", "🐷 Meus Porquinhos & Rumo ao Milhão", "📅 Agenda de Compromissos"])
 
 # ==================== ABA 1 ====================
 with aba_painel:
-    st.title("📲 Meu Planner Financeiro")
+    st.title("Meu Planner Financeiro")
     
     st.markdown(f"### 👑 Movimentação de Caixa Real ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
@@ -430,7 +431,7 @@ with aba_painel:
         elif val_total_fatura <= 0:
             st.error("❌ O valor total da fatura precisa ser maior que zero.")
         elif round(soma_partes, 2) != round(val_total_fatura, 2):
-            st.error(f"❌ A soma das categorias (R$ {soma_partes:,.2f}) não bate com o valor total informado da fatura (R$ {val_total_fatura:,.2f}). Diferença: R$ {abs(val_total_fatura - soma_partes):,.2f}")
+            st.error(f"❌ A soma das categorias não bate com o valor total informado da fatura.")
         else:
             try:
                 inserts_pendentes = []
