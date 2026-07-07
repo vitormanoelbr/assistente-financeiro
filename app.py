@@ -175,7 +175,6 @@ if supabase:
                     })
                     continue
                 
-                # Agrupamento da Agenda independente de Caixa Alta/Baixa
                 if "AGENDA" in grupo.upper():
                     if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
                         if "PAGAR" in grupo.upper():
@@ -198,7 +197,6 @@ if supabase:
             if not df_todos_dados.empty:
                 df_filtrado = df_todos_dados.copy()
                 
-                # Filtro robusto e normalizado (Ignora Case Sensitivity e previne somiço da tabela)
                 df_filtrado = df_filtrado[~df_filtrado["grupo_orcamentario"].astype(str).str.upper().str.contains("CONFIGURAC|CONFIGURAÇÃO|CONFIG", na=False)]
                 df_filtrado = df_filtrado[~df_filtrado["descricao"].astype(str).str.upper().str.contains("CONFIG_PERFIL|DIVIDA_ATIVA", na=False)]
                 df_filtrado = df_filtrado[~df_filtrado["grupo_orcamentario"].astype(str).str.upper().str.contains("AGENDA", na=False)]
@@ -211,7 +209,7 @@ if supabase:
                         dt = linha["data_dt"]
                         tipo_pgto = str(linha.get("tipo") or "")
                         if "💳" in tipo_pgto or "CARTÃO" in tipo_pgto.upper():
-                            if dt.day > 20:
+                            if dt.day > 20: # Dia de fechamento padrão configurado
                                 proximo_mes = dt.month + 1 if dt.month < 12 else 1
                                 proximo_ano = dt.year if dt.month < 12 else dt.year + 1
                                 return proximo_ano, proximo_mes
@@ -221,7 +219,6 @@ if supabase:
                         lambda r: pd.Series(calcular_mes_fatura(r)), axis=1
                     )
                     
-                    # Aplicação das regras de competência temporal
                     df_filtrado = df_filtrado[
                         ((df_filtrado["tipo"].astype(str).str.contains("💳|Cartão", na=False)) & (df_filtrado["ano_fatura"] == ano_selected) & (df_filtrado["mes_fatura"] == mes_selected_num)) |
                         ((~df_filtrado["tipo"].astype(str).str.contains("💳|Cartão", na=False)) & (df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num))
@@ -229,7 +226,6 @@ if supabase:
 
             df_acumulado_mes_cheio = df_filtrado.copy()
 
-            # Janelas temporárias dinâmicas
             if janela_tempo == "Últimos 7 Dias" and not df_filtrado.empty:
                 df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
             elif janela_tempo == "Somente Hoje" and not df_filtrado.empty:
@@ -239,7 +235,6 @@ if supabase:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
                 df_filtrado = df_filtrado[df_filtrado["descricao_lower"].str.contains(tag_busca, na=False)]
                 
-            # Liquidação matemática do período corrente
             if not df_acumulado_mes_cheio.empty:
                 for _, row in df_acumulado_mes_cheio.iterrows():
                     val = float(row["valor"])
@@ -347,7 +342,7 @@ with aba_painel:
     st.markdown(f"### 👑 Gestão de Teto Orçamentário ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
     c_caixa1.metric(label="💰 Saldo Disponível (Orçamento)", value=f"R$ {saldo_real_exibido:,.2f}")
-    c_caixa2.metric(label="📈 Faturamento Extra Capturado", value=f"R$ {faturamento_extra_mes:,.2f}")
+    c_caixa2.metric(label="💳 Fatura Estimada Atual", value=f"R$ {fatura_acumulada_mes:,.2f}", help="Total acumulado em compras de cartão com vencimento neste ciclo orçamentário.")
     c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}")
 
     st.markdown("---")
@@ -386,17 +381,23 @@ with aba_painel:
         nome_novo_fundo = col_n1.text_input("Nome da Nova Meta:", placeholder="Ex: ✈️ Viagem")
         val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=50.0)
 
+    # Fluxo Inteligente para Detecção de Meio de Pagamento e Parcelamento
+    tipo = st.radio("Fluxo Financeiro / Meio de Pagamento:", [
+        "📱 Saída Dinheiro / Pix (Débito)", 
+        "💳 Saída Cartão de Crédito", 
+        "Faturamento ou Receita (Entrada)"
+    ], horizontal=True, disabled=criando_novo_porquinho)
+
+    is_parcelado = False
+    num_parcelas = 1
+    if tipo == "💳 Saída Cartão de Crédito" and not criando_novo_porquinho:
+        col_p1, col_p2 = st.columns(2)
+        is_parcelado = col_p1.checkbox("Esta compra é parcelada?")
+        if is_parcelado:
+            num_parcelas = col_p2.number_input("Número de parcelas:", min_value=2, max_value=24, value=2, step=1)
+
     with st.form("formulario_envio_blindado", clear_on_submit=True):
-        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=0.01, format="%.2f")
-        if criando_novo_porquinho:
-            tipo = st.radio("Fluxo Financeiro:", ["Faturamento ou Receita (Entrada)"])
-        else:
-            tipo = st.radio("Fluxo Financeiro / Meio de Pagamento:", [
-                "📱 Saída Dinheiro / Pix (Débito)", 
-                "💳 Saída Cartão de Crédito", 
-                "Faturamento ou Receita (Entrada)"
-            ], horizontal=True)
-            
+        valor = st.number_input("Qual o valor total da operação? (R$)", min_value=0.0, step=0.01, format="%.2f") if not is_parcelado else st.number_input("Qual o valor de CADA PARCELA? (R$)", min_value=0.0, step=0.01, format="%.2f")
         data_movimento = st.date_input("Data do evento:", datetime.date.today())
         descricao = st.text_input("Descrição ou Estabelecimento:")
         satisfacao = st.select_slider("🧠 Nível de necessidade?", options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"], value="2 - Útil / Desejável")
@@ -404,22 +405,48 @@ with aba_painel:
         
     if botao_enviar and supabase:
         final_subcat = nome_novo_fundo if criando_novo_porquinho else categoria
-        final_valor = val_alvo_novo_fundo if criando_novo_porquinho else valor
         final_desc = f"Meta Criada: {nome_novo_fundo}" if criando_novo_porquinho else descricao
+        final_tipo = "Faturamento ou Receita (Entrada)" if criando_novo_porquinho else tipo
         
-        if final_valor > 0 and final_desc:
+        if valor > 0 and final_desc:
             try:
-                supabase.table("movimentacoes").insert({
-                    "data": str(data_movimento), "valor": float(final_valor), "tipo": tipo,
-                    "descricao": final_desc, "grupo_orcamentario": grupo_orcamentario,
-                    "subcategoria": final_subcat, "satisfacao": satisfacao, "user_id": USER_ID
-                }).execute()
-                st.success("✅ Sincronizado com sucesso!")
+                if is_parcelado and final_tipo == "💳 Saída Cartão de Crédito":
+                    # Motor de Projeção de Futuro: Cria ramificações mensais automáticas no banco de dados
+                    base_date = data_movimento
+                    for i in range(num_parcelas):
+                        # Calcula a soma dos meses subsequentes com segurança matemática
+                        num_months = base_date.month - 1 + i
+                        year_offset = num_months // 12
+                        month_offset = (num_months % 12) + 1
+                        
+                        # Tenta manter o mesmo dia, ajustando se estourar os dias do mês de destino
+                        try:
+                            parcel_date = datetime.date(base_date.year + year_offset, month_offset, base_date.day)
+                        except ValueError:
+                            # Se cair num dia inexistente (Ex: 31 de Fevereiro), joga pro último dia do mês
+                            next_month_start = datetime.date(base_date.year + year_offset, month_offset + 1, 1) if month_offset < 12 else datetime.date(base_date.year + year_offset + 1, 1, 1)
+                            parcel_date = next_month_start - datetime.timedelta(days=1)
+                        
+                        desc_parcela = f"{final_desc} ({i+1}/{num_parcelas})"
+                        supabase.table("movimentacoes").insert({
+                            "data": str(parcel_date), "valor": float(valor), "tipo": final_tipo,
+                            "descricao": desc_parcela, "grupo_orcamentario": grupo_orcamentario,
+                            "subcategoria": final_subcat, "satisfacao": satisfacao, "user_id": USER_ID
+                        }).execute()
+                else:
+                    # Lançamento Simples tradicional
+                    supabase.table("movimentacoes").insert({
+                        "data": str(data_movimento), "valor": float(valor), "tipo": final_tipo,
+                        "descricao": final_desc, "grupo_orcamentario": grupo_orcamentario,
+                        "subcategoria": final_subcat, "satisfacao": satisfacao, "user_id": USER_ID
+                    }).execute()
+                    
+                st.success("✅ Lançamento computado e distribuído no tempo com estabilidade!")
                 st.rerun()
             except Exception as e:
-                st.error(f"Erro ao salvar: {e}")
+                st.error(f"Erro ao salvar movimentação: {e}")
 
-    # === 📋 SEÇÃO RESTAURADA E BLINDADA DE LANÇAMENTOS ===
+    # --- 📋 SEÇÃO DE LANÇAMENTOS ---
     st.markdown("---")
     st.subheader("📋 Gerenciar Lançamentos do Período")
     
@@ -440,11 +467,9 @@ with aba_painel:
                 linhas_atuais_ids = set(dados_editados["ID"].dropna().astype(int).tolist())
                 linhas_originais_ids = set(df_editor["ID"].astype(int).tolist())
                 
-                # Exclusão segura das linhas removidas pelo usuário
                 for id_del in (linhas_originais_ids - linhas_atuais_ids):
                     supabase.table("movimentacoes").delete().eq("id", id_del).execute()
                     
-                # Atualização explícita baseada em chaves primárias imutáveis (IDs)
                 for _, row in dados_editados.iterrows():
                     if pd.notna(row["ID"]):
                         row_id = int(row["ID"])
@@ -543,7 +568,7 @@ with aba_agenda:
 # ==================== ABA 4 (GESTÃO DE DÍVIDAS) ====================
 with aba_dividas:
     st.title("📋 Controle Estrutural de Passivos e Dívidas")
-    st.caption("Gerenciamento inteligente de contas consolidadas de longo prazo de forma simplificada.")
+    st.caption("Gerenciamento de contas consolidadas de longo prazo de forma simplificada.")
     
     divida_bruta_total = sum([d["valor_original"] for d in lista_dividas_cadastradas])
     total_amortizado_historico = sum(amortizacoes_totais_historicas.values())
