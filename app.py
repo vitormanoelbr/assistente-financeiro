@@ -176,10 +176,11 @@ if supabase:
                             agenda_a_receber_mes += val_mov
                     continue
                 
-                if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
-                    global_entradas += val_mov
-                elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "[AJUSTE]" in desc:
-                    global_saidas_caixa += val_mov
+                if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
+                    if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
+                        global_entradas += val_mov
+                    elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "[AJUSTE]" in desc:
+                        global_saidas_caixa += val_mov
 
                 if "🚀 20% Aporte" in grupo and "Entrada" in tipo_mov:
                     dicionario_metas_alvo[subcat] = val_mov
@@ -259,7 +260,7 @@ if supabase:
         else:
             st.error(f"Erro na validação de dados: {e}")
 
-# --- CONTROLE DE SALDO ---
+# --- CONTROLE DE SALDO REAL ---
 saldo_real_exibido = global_entradas - global_saidas_caixa
 saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
@@ -313,14 +314,37 @@ if not lista_porquinhos_existentes:
     lista_porquinhos_existentes = ["🧱 Reserva de Emergência", "🏡 Comprar Casa"]
 
 MAPA_CATEGORIAS = {
-    "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)": ["Alimentação Básica & Mercado", "Contas Fixas (Luz, Água, Internet)", "Habitação (Aluguel / Financiamento)", "Saúde & Medicamentos", "Transporte & Combustível"],
-    "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)": ["Lazer, Bares & Restaurantes", "Delivery / iFood / Conforto", "Vestuário, Compras & Presentes", "Estética, Cuidados & Academia", "Viagens & Hobbies", "Assinaturas (Netflix, Spotify)"],
+    "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)": [
+        "Alimentação Básica & Mercado", 
+        "Contas Fixas (Luz, Água, Internet)", 
+        "Habitação (Aluguel / Financiamento)", 
+        "Saúde & Medicamentos", 
+        "Transporte & Combustível",
+        "👶 Pensão / Filho"
+    ],
+    "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)": [
+        "Lazer, Bares & Restaurantes", 
+        "Delivery / iFood / Conforto", 
+        "Vestuário, Compras & Presentes", 
+        "Estética, Cuidados & Academia", 
+        "Viagens & Hobbies", 
+        "Assinaturas (Netflix, Spotify)"
+    ],
     "🚀 20% Aporte para a Liberdade (Investimentos e Futuro)": lista_porquinhos_existentes + ["➕ [Criar Nova Meta / Porquinho]"],
-    "📋 Quitação de Dívidas (Amortizações e Acordos)": ["Empréstimos Bancários", "Cartão de Crédito Atrasado", "Financiamentos de Bens", "Dívidas Pessoais / Terceiros"],
-    "💼 Custos de Negócio (Projetos e Clínica)": ["Ferramentas SaaS & Softwares", "Marketing & Anúncios", "Infraestrutura & Custos Operacionais"]
+    "📋 Quitação de Dívidas (Amortizações e Acordos)": [
+        "Empréstimos Bancários", 
+        "Cartão de Crédito Atrasado", 
+        "Financiamentos de Bens", 
+        "Dívidas Pessoais / Terceiros"
+    ],
+    "💼 Custos de Negócio (Projetos e Clínica)": [
+        "Ferramentas SaaS & Softwares", 
+        "Marketing & Anúncios", 
+        "Infraestrutura & Custos Operacionais"
+    ]
 }
 
-# Criando as abas nativas
+# Configuração correta de Abas
 aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", "🐷 Meus Porquinhos & Rumo ao Milhão", "📅 Agenda de Compromissos"])
 
 # ==================== ABA 1 ====================
@@ -329,12 +353,12 @@ with aba_painel:
     
     st.markdown(f"### 👑 Movimentação de Caixa Real ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Histórico real consolidado de entradas e saídas de caixa da conta corrente.")
-    c_caixa2.metric(label="💳 Cartão (A Vencer)", value=f"R$ {fatura_acumulada_mes:,.2f}", help="Total acumulado em compras no crédito com vencimento neste mês.")
-    c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}", help="Soma de tudo o que foi conhecido no período (Débito + Crédito)")
+    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}")
+    c_caixa2.metric(label="💳 Cartão (A Vencer)", value=f"R$ {fatura_acumulada_mes:,.2f}")
+    c_caixa3.metric(label="📉 Total Consumido no Mês", value=f"R$ {gastos_reais_mes:,.2f}")
 
     st.markdown("---")
-    st.subheader("📊 Painel de Limites Orçamentários (Soma total de Pix + Crédito)")
+    st.subheader("📊 Painel de Limites Orçamentários")
     
     st.write(f"🔴 **Gasto Essencial:** R$ {gastos_essencial:,.2f} de R$ {LIMITE_ESSENCIAL:,.2f}")
     st.progress(min(gastos_essencial / LIMITE_ESSENCIAL, 1.0) if LIMITE_ESSENCIAL > 0 else 0.0)
@@ -402,18 +426,15 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # ==================== MECANISMO DE RATEIO DE FATURA ====================
+    # ==================== RATEIO DE FATURA ====================
     st.markdown("---")
-    st.subheader("💳 Rateio Rápido de Fatura Fechada (Ajustar Passado)")
-    st.caption("Use esta ferramenta para desmembrar o valor total de uma fatura antiga de cartão de crédito diretamente nas categorias reais.")
-
+    st.subheader("💳 Rateio Rápido de Fatura Fechada")
     with st.form("formulario_rateio_fatura", clear_on_submit=True):
         col_f1, col_f2 = st.columns(2)
         val_total_fatura = col_f1.number_input("Valor Total Pago na Fatura (R$):", min_value=0.0, step=0.01, format="%.2f")
         data_fatura = col_f2.date_input("Data do Pagamento da Fatura:", datetime.date.today())
-        descricao_fatura = st.text_input("Identificação da Fatura:", placeholder="Ex: Fatura Nubank - Junho/2026")
+        descricao_fatura = st.text_input("Identificação da Fatura:", placeholder="Ex: Fatura Nubank")
         
-        st.markdown("**Distribuição Estratégica dos Gastos Dentro da Fatura:**")
         col_r1, col_r2 = st.columns(2)
         rateio_essencial = col_r1.number_input("🔴 Quanto foi Essencial (50%)? (R$)", min_value=0.0, step=0.01, format="%.2f")
         rateio_estilo = col_r2.number_input("🟡 Quanto foi Estilo de Vida (30%)? (R$)", min_value=0.0, step=0.01, format="%.2f")
@@ -425,12 +446,7 @@ with aba_painel:
 
     if botao_enviar_rateio and supabase:
         soma_partes = rateio_essencial + rateio_estilo + rateio_negocio + rateio_dividas
-        
-        if not descricao_fatura:
-            st.error("❌ Por favor, insira uma identificação para esta fatura.")
-        elif val_total_fatura <= 0:
-            st.error("❌ O valor total da fatura precisa ser maior que zero.")
-        elif round(soma_partes, 2) != round(val_total_fatura, 2):
+        if round(soma_partes, 2) != round(val_total_fatura, 2):
             st.error(f"❌ A soma das categorias não bate com o valor total informado da fatura.")
         else:
             try:
@@ -441,26 +457,19 @@ with aba_painel:
                     {"valor": rateio_negocio, "grupo": "💼 Custos de Negócio (Projetos e Clínica)", "subcat": "Infraestrutura & Custos Operacionais"},
                     {"valor": rateio_dividas, "grupo": "📋 Quitação de Dívidas (Amortizações e Acordos)", "subcat": "Cartão de Crédito Atrasado"}
                 ]
-                
                 for item in mapeamento_rateio:
                     if item["valor"] > 0:
                         inserts_pendentes.append({
-                            "data": str(data_fatura),
-                            "valor": float(item["valor"]),
-                            "tipo": "💳 Saída Cartão de Crédito",
-                            "descricao": f"{descricao_fatura} [Rateio]",
-                            "grupo_orcamentario": item["grupo"],
-                            "subcategoria": item["subcat"],
-                            "satisfacao": "3 - Indispensável",
-                            "user_id": USER_ID
+                            "data": str(data_fatura), "valor": float(item["valor"]), "tipo": "💳 Saída Cartão de Crédito",
+                            "descricao": f"{descricao_fatura} [Rateio]", "grupo_orcamentario": item["grupo"],
+                            "subcategoria": item["subcat"], "satisfacao": "3 - Indispensável", "user_id": USER_ID
                         })
-                
                 if inserts_pendentes:
                     supabase.table("movimentacoes").insert(inserts_pendentes).execute()
-                    st.success(f"🎉 Perfeito! A fatura foi fragmentada em lançamentos estratégicos no Supabase.")
+                    st.success(f"🎉 Fatura fragmentada com sucesso!")
                     st.rerun()
             except Exception as e:
-                st.error(f"Falha ao processar rateio no banco de dados: {e}")
+                st.error(f"Falha ao processar rateio: {e}")
 
     # Tabela Gerenciadora
     st.markdown("---")
@@ -474,7 +483,7 @@ with aba_painel:
             try:
                 linhas_atuais_ids = set(dados_editados["ID"].tolist())
                 linhas_originais_ids = set(df_editor["ID"].tolist())
-                for id_del in (linhas_originais_ids - linhas_atuais_ids):
+                for id_del in (linhas_originais_ids - lines_atuais_ids if 'lines_atuais_ids' in locals() else linhas_originais_ids - linhas_atuais_ids):
                     supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
                 for _, row in dados_editados.iterrows():
                     row_id = int(row["ID"])
@@ -579,36 +588,16 @@ with aba_agenda:
                 id_item = int(row["id"])
                 desc_pura = str(row["descricao"]).replace("[AGENDA COMPROMISSO] ", "")
                 valor_item = float(row["valor"])
-                data_original = pd.to_datetime(row["data"]).date()
                 
                 col_c1, col_c2, col_c3 = st.columns([4, 2, 2])
                 col_c1.write(f"📅 **{row['data']}** - {desc_pura} | **R$ {valor_item:,.2f}**")
                 
                 if "CONTAS A PAGAR" in str(row["grupo_orcamentario"]):
                     col_c2.caption("🔴 A Pagar")
-                    
                     if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
                         supabase.table("movimentacoes").delete().eq("id", id_item).execute()
                         supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
                         st.rerun()
-                        
-                    nova_data_futura = data_original + datetime.timedelta(days=30)
-                    if col_c3.button("🔄 Repetir", key=f"rep_{id_item}", help="Clona esta mesma despesa para o mês seguinte (+30 dias)"):
-                        try:
-                            supabase.table("movimentacoes").insert({
-                                "data": str(nova_data_futura),
-                                "valor": valor_item,
-                                "tipo": str(row["tipo"]),
-                                "descricao": row["descricao"],
-                                "grupo_orcamentario": str(row["grupo_orcamentario"]),
-                                "subcategoria": str(row["subcategoria"]),
-                                "satisfacao": str(row["satisfacao"]),
-                                "user_id": USER_ID
-                            }).execute()
-                            st.success(f"🔄 Agendado para {nova_data_futura.strftime('%d/%m/%Y')}!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao clonar: {e}")
                 else:
                     col_c2.caption("🟢 A Receber")
                     if col_c3.button("💰 Receber", key=f"rec_{id_item}"):
