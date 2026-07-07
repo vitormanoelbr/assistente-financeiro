@@ -121,7 +121,7 @@ tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #
 renda_base_usuario = 0.0  
 
 faturamento_extra_mes = 0.0
-global_entradas = 0.0  # Inicializada por segurança para evitar NameError secundário
+global_entradas = 0.0  
 gastos_reais_mes = 0.0       
 saidas_imediatas_caixa = 0.0 
 fatura_acumulada_mes = 0.0   
@@ -151,7 +151,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # 1. Pega dinamicamente a renda guardada na linha de configuração do banco
+            # Pega dinamicamente a renda do perfil
             for item in res_data:
                 desc = item.get("descricao") or ""
                 subcat = item.get("subcategoria") or ""
@@ -178,7 +178,6 @@ if supabase:
                             agenda_a_receber_mes += val_mov
                     continue
                 
-                # Metas e Porquinhos isolados da conta do caixa principal
                 if "🚀 20% Aporte" in grupo:
                     if "Entrada" in tipo_mov or "Faturamento" in tipo_mov:
                         dicionario_metas_alvo[subcat] = val_mov
@@ -228,6 +227,10 @@ if supabase:
                 grupo_item = str(row["grupo_orcamentario"] or "")
                 tipo_mov = str(row.get("tipo") or "")
                 
+                # Impede vazamento da agenda no cálculo real do teto
+                if "📅 AGENDA" in grupo_item:
+                    continue
+                    
                 if "Faturamento" in tipo_mov or "Receita" in tipo_mov or "Entrada" in tipo_mov:
                     if "🚀 20% Aporte" in grupo_item:
                         continue
@@ -318,7 +321,6 @@ MAPA_CATEGORIAS = {
     ]
 }
 
-# Configuração de Abas Estáveis Nativas do Streamlit
 aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", "🐷 Meus Porquinhos & Rumo ao Milhão", "📅 Agenda de Compromissos"])
 
 # ==================== ABA 1 ====================
@@ -340,15 +342,19 @@ with aba_painel:
     st.progress(min(gastos_estilo / LIMITE_ESTILO_DE_VIDA, 1.0) if LIMITE_ESTILO_DE_VIDA > 0 else 0.0)
     st.write(f"📋 **Quitação de Dívidas Realizada:** R$ {gastos_dividas:,.2f}")
     
+    # CRÍTICO: Remoção da Agenda dos Gráficos de Saídas Reais
     try:
         df_saidas = df_filtrado[df_filtrado["tipo"].str.contains("Saída|📱|💳", na=False)].copy()
         if not df_saidas.empty:
-            st.markdown("---")
-            st.subheader("🍩 Distribuição das Despesas Reais")
-            df_pizza = df_saidas.groupby("grupo_orcamentario")["valor"].sum().reset_index()
-            fig_donut = px.pie(df_pizza, values="valor", names="grupo_orcamentario", hole=0.4, color_discrete_sequence=px.colors.qualitative.Safe)
-            fig_donut.update_layout(margin=dict(t=10, b=10, l=10, r=10))
-            st.plotly_chart(fig_donut, use_container_width=True)
+            df_saidas = df_saidas[~df_saidas["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)]
+            
+            if not df_saidas.empty:
+                st.markdown("---")
+                st.subheader("🍩 Distribuição das Despesas Reais")
+                df_pizza = df_saidas.groupby("grupo_orcamentario")["valor"].sum().reset_index()
+                fig_donut = px.pie(df_pizza, values="valor", names="grupo_orcamentario", hole=0.4, color_discrete_sequence=px.colors.qualitative.Safe)
+                fig_donut.update_layout(margin=dict(t=10, b=10, l=10, r=10))
+                st.plotly_chart(fig_donut, use_container_width=True)
     except:
         pass
 
@@ -367,7 +373,7 @@ with aba_painel:
         val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=50.0)
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
-        valor = st.number_input("Qual o valor da operation? (R$)", min_value=0.0, step=0.01, format="%.2f")
+        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=0.01, format="%.2f")
         if criando_novo_porquinho:
             tipo = st.radio("Fluxo Financeiro:", ["Faturamento ou Receita (Entrada)"])
         else:
@@ -399,27 +405,29 @@ with aba_painel:
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # Tabela Gerenciadora
+    # Tabela Gerenciadora Otimizada (Filtra a visualização da tabela para não misturar agendas ali)
     st.markdown("---")
     st.subheader("📋 Gerenciar Lançamentos do Período")
     if supabase and not df_filtrado.empty:
-        df_editor = df_filtrado[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
-        df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Meio / Tipo"]
-        dados_editados = st.data_editor(use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic", data=df_editor)
-        
-        if st.button("💾 Salvar Alterações da Tabela"):
-            try:
-                linhas_atuais_ids = set(dados_editados["ID"].tolist())
-                linhas_originais_ids = set(df_editor["ID"].tolist())
-                for id_del in (linhas_originais_ids - linhas_atuais_ids):
-                    supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
-                for _, row in dados_editados.iterrows():
-                    row_id = int(row["ID"])
-                    supabase.table("movimentacoes").update({"descricao": row["Descrição"], "valor": float(row["Valor (R$)"]), "tipo": row["Meio / Tipo"]}).eq("id", row_id).eq("user_id", USER_ID).execute()
-                st.success("🔄 Alterações sincronizadas!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro: {e}")
+        df_historico_real = df_filtrado[~df_filtrado["grupo_orcamentario"].str.contains("📅 AGENDA", na=False)].copy()
+        if not df_historico_real.empty:
+            df_editor = df_historico_real[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
+            df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Meio / Tipo"]
+            dados_editados = st.data_editor(use_container_width=True, hide_index=True, disabled=["ID"], num_rows="dynamic", data=df_editor)
+            
+            if st.button("💾 Salvar Alterações da Tabela"):
+                try:
+                    linhas_atuais_ids = set(dados_editados["ID"].tolist())
+                    linhas_originais_ids = set(df_editor["ID"].tolist())
+                    for id_del in (linhas_originais_ids - linhas_atuais_ids):
+                        supabase.table("movimentacoes").delete().eq("id", int(id_del)).execute()
+                    for _, row in dados_editados.iterrows():
+                        row_id = int(row["ID"])
+                        supabase.table("movimentacoes").update({"descricao": row["Descrição"], "valor": float(row["Valor (R$)"]), "tipo": row["Meio / Tipo"]}).eq("id", row_id).eq("user_id", USER_ID).execute()
+                    st.success("🔄 Alterações sincronizadas!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro: {e}")
 
 # ==================== ABA 2 (PORQUINHOS) ====================
 with aba_porquinhos:
