@@ -133,9 +133,6 @@ gastos_estilo = 0.0
 gastos_aporte_mes = 0.0
 gastos_negocio = 0.0
 
-DIVIDA_TOTAL_INICIAL = 0.0
-total_pago_divida = 0.0
-
 agenda_a_pagar_mes = 0.0
 agenda_a_receber_mes = 0.0
 
@@ -176,19 +173,14 @@ if supabase:
                             agenda_a_receber_mes += val_mov
                     continue
                 
-                if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
-                    if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
-                        global_entradas += val_mov
-                    elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "[AJUSTE]" in desc:
-                        global_saidas_caixa += val_mov
+                # O Saldo da conta Corrente SEMPRE acumula todo o histórico do banco de dados (Sem filtro de mês)
+                if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
+                    global_entradas += val_mov
+                elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "[AJUSTE]" in desc:
+                    global_saidas_caixa += val_mov
 
                 if "🚀 20% Aporte" in grupo and "Entrada" in tipo_mov:
                     dicionario_metas_alvo[subcat] = val_mov
-                elif "📋 Quitação de Dívidas" in grupo:
-                    if "Entrada" in tipo_mov:
-                        DIVIDA_TOTAL_INICIAL += val_mov
-                    else:
-                        total_pago_divida += val_mov
                 elif "🚀 20% Aporte" in grupo and "Saída" in tipo_mov:
                     dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
@@ -221,7 +213,7 @@ if supabase:
 
             df_acumulado_mes_cheio = df_filtrado.copy()
 
-            if janela_tempo == "Últimos 7 Dias":
+            if janela_tempo == "Últimos 7 Days" or janela_tempo == "Últimos 7 Dias":
                 df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
             elif janela_tempo == "Somente Hoje":
                 df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
@@ -248,7 +240,7 @@ if supabase:
                         gastos_essencial += val
                     elif "30% Estilo de Vida" in grupo_item:
                         gastos_estilo += val
-                    elif "20% Aporte" in grupo_item:
+                    elif "20% Aporte" in group_item or "20% Aporte" in grupo_item:
                         gastos_aporte_mes += val
                     elif "💼 Custos de Negócio" in grupo_item:
                         gastos_negocio += val
@@ -262,7 +254,6 @@ if supabase:
 
 # --- CONTROLE DE SALDO REAL ---
 saldo_real_exibido = global_entradas - global_saidas_caixa
-saldo_devedor_restante = max(DIVIDA_TOTAL_INICIAL - total_pago_divida, 0.0)
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Sincronização de Saldos")
@@ -300,7 +291,7 @@ if st.sidebar.button("💾 Salvar Renda Base"):
             "descricao": "[CONFIG_PERFIL] Renda Base", "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
             "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID
         }).execute()
-        st.sidebar.success("Renda salva!")
+        st.success("Renda salva!")
         st.rerun()
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
@@ -344,7 +335,7 @@ MAPA_CATEGORIAS = {
     ]
 }
 
-# Configuração estável de Abas Separadas
+# Configuração de Abas Estáveis Nativas do Streamlit
 aba_painel, aba_porquinhos, aba_agenda = st.tabs(["📊 Painel & Lançamentos", "🐷 Meus Porquinhos & Rumo ao Milhão", "📅 Agenda de Compromissos"])
 
 # ==================== ABA 1 ====================
