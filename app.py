@@ -121,6 +121,7 @@ tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #
 renda_base_usuario = 0.0  
 
 faturamento_extra_mes = 0.0
+global_entradas = 0.0  # Inicializada por segurança para evitar NameError secundário
 gastos_reais_mes = 0.0       
 saidas_imediatas_caixa = 0.0 
 fatura_acumulada_mes = 0.0   
@@ -231,6 +232,7 @@ if supabase:
                     if "🚀 20% Aporte" in grupo_item:
                         continue
                     faturamento_extra_mes += val
+                    global_entradas += val
                 else:
                     if "🚀 20% Aporte" in grupo_item:
                         continue
@@ -365,7 +367,7 @@ with aba_painel:
         val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=50.0)
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
-        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=0.01, format="%.2f")
+        valor = st.number_input("Qual o valor da operation? (R$)", min_value=0.0, step=0.01, format="%.2f")
         if criando_novo_porquinho:
             tipo = st.radio("Fluxo Financeiro:", ["Faturamento ou Receita (Entrada)"])
         else:
