@@ -145,7 +145,8 @@ df_filtrado = pd.DataFrame()
 if supabase:
     try:
         supabase.postgrest.auth(st.session_state["user_token"])
-        resposta_completa = supabase.table("movimentacoes").select("id, data, descricao, grupo_orcamentario, subcategoria, valor, satisfacao, tipo, user_id").execute()
+        # SEGURANÇA MÁXIMA: Filtro por USER_ID injetado diretamente na query do banco
+        resposta_completa = supabase.table("movimentacoes").select("id, data, descricao, grupo_orcamentario, subcategoria, valor, satisfacao, tipo, user_id").eq("user_id", USER_ID).execute()
         
         if resposta_completa and hasattr(resposta_completa, 'data') and resposta_completa.data:
             res_data = resposta_completa.data
@@ -169,11 +170,11 @@ if supabase:
                     if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
                         if "📅 AGENDA: CONTAS A PAGAR" in grupo:
                             agenda_a_pagar_mes += val_mov
-                        elif "📅 AGENDA: CONTAS A RECEBER" in grupo:  # CORRIGIDO DE group PARA grupo
+                        elif "📅 AGENDA: CONTAS A RECEBER" in grupo:
                             agenda_a_receber_mes += val_mov
                     continue
                 
-                # Saldo Histórico Acumulado Completo
+                # Saldo Histórico Isolado estritamente para o seu USER_ID
                 if "Faturamento" in tipo_mov or "Receita" in tipo_mov:
                     global_entradas += val_mov
                 elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "[AJUSTE]" in desc:
@@ -273,7 +274,7 @@ if st.sidebar.button("🔄 Conciliar com o Banco"):
             
             supabase.table("movimentacoes").insert({
                 "data": str(hoje), "valor": float(abs(discrepancia)), "tipo": tipo_ajuste,
-                "descricao": "[AJUSTE] Alinhamento de Saldo Real", "grupo_orcamentario": group_ajuste if 'group_ajuste' in locals() else grupo_ajuste,
+                "descricao": "[AJUSTE] Alinhamento de Saldo Real", "grupo_orcamentario": grupo_ajuste,
                 "subcategoria": "Ajuste de Saldo", "satisfacao": "3 - Indispensável", "user_id": USER_ID
             }).execute()
             st.sidebar.success("🎉 Ledger equilibrado com sucesso!")
