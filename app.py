@@ -161,6 +161,7 @@ if supabase:
                 desc = item.get("descricao") or ""
                 dt_item = pd.to_datetime(item["data"]).date()
                 
+                # Captura a Renda Base apenas para fins de configuração visual de limites
                 if "[CONFIG_PERFIL]" in desc and "Renda Base Nativa" in subcat:
                     renda_base_usuario = val_mov
                     continue
@@ -173,16 +174,19 @@ if supabase:
                             agenda_a_receber_mes += val_mov
                     continue
                 
-                # Saldo Histórico Acumulado (IGNORA AS LINHAS DE AGENDA)
+                # Separação Lógica de Metas/Porquinhos para não misturar com o Caixa de Hoje
+                if "🚀 20% Aporte" in grupo:
+                    if "Entrada" in tipo_mov or "Faturamento" in tipo_mov:
+                        dicionario_metas_alvo[subcat] = val_mov
+                    elif "Saída" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov:
+                        dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
+                    continue # Não soma metas no saldo disponível em conta
+                
+                # Saldo Histórico Baseado puramente em Movimentações de Caixa Reais
                 if "Faturamento" in tipo_mov or "Receita" in tipo_mov or "Entrada" in tipo_mov:
                     global_entradas += val_mov
                 elif "📱" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov or "Saída" in tipo_mov or "[AJUSTE]" in desc:
                     global_saidas_caixa += val_mov
-
-                if "🚀 20% Aporte" in grupo and ("Entrada" in tipo_mov or "Faturamento" in tipo_mov):
-                    dicionario_metas_alvo[subcat] = val_mov
-                elif "🚀 20% Aporte" in grupo and ("Saída" in tipo_mov or "Pix" in tipo_mov or "Débito" in tipo_mov):
-                    dicionario_aportes_acumulados[subcat] = dicionario_aportes_acumulados.get(subcat, 0.0) + val_mov
 
             df_filtrado = df_todos_dados.copy()
             if not df_filtrado.empty:
