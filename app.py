@@ -269,6 +269,14 @@ if supabase:
 # --- ORIGENS DE VERDADE MATEMÁTICA ---
 saldo_real_exibido = renda_base_usuario + faturamento_extra_mes - gastos_dinheiro_caixa
 total_consumido_orcamento = gastos_dinheiro_caixa + fatura_acumulada_mes
+receita_total_reconhecida_mes = renda_base_usuario + faturamento_extra_mes
+saldo_projetado_fim_mes = saldo_real_exibido + agenda_a_receber_mes - agenda_a_pagar_mes - fatura_acumulada_mes
+
+porcentagem_cartao_renda = (fatura_acumulada_mes / renda_base_usuario) if renda_base_usuario > 0 else 0.0
+porcentagem_consumo_total = (total_consumido_orcamento / receita_total_reconhecida_mes) if receita_total_reconhecida_mes > 0 else 0.0
+porcentagem_gasto_caixa = (gastos_dinheiro_caixa / receita_total_reconhecida_mes) if receita_total_reconhecida_mes > 0 else 0.0
+porcentagem_essencial = (gastos_essencial / (renda_base_usuario * 0.50)) if renda_base_usuario > 0 else 0.0
+porcentagem_estilo = (gastos_estilo / (renda_base_usuario * 0.30)) if renda_base_usuario > 0 else 0.0
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Configurações do Usuário")
@@ -293,6 +301,8 @@ LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30
 text_limite_estilo = f"R$ {LIMITE_ESTILO_DE_VIDA:,.2f}" if LIMITE_ESTILO_DE_VIDA > 0 else "Não Definido"
 
 lista_nomes_dividas = [d["nome"] for d in lista_dividas_cadastradas] if lista_dividas_cadastradas else ["Empréstimos Bancários", "Cartão de Crédito Atrasado"]
+comprometimento_parcelas_mensais = sum([d["parcela"] for d in lista_dividas_cadastradas])
+indice_comprometimento = (comprometimento_parcelas_mensais / renda_base_usuario * 100) if renda_base_usuario > 0 else 0.0
 lista_porquinhos_existentes = list(dicionario_metas_alvo.keys())
 if not lista_porquinhos_existentes:
     lista_porquinhos_existentes = ["🧱 Reserva de Emergência", "🏡 Comprar Casa"]
@@ -323,12 +333,138 @@ MAPA_CATEGORIAS = {
     ]
 }
 
-aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
+aba_diagnostico, aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
+    "🧭 Diagnóstico Financeiro",
     "📊 Painel & Lançamentos", 
     "🐷 Meus Porquinhos & Rumo ao Milhão", 
     "📅 Agenda de Compromissos", 
     "📋 Gestão de Dívidas & Passivos"
 ])
+
+# ==================== ABA 0 (DIAGNÓSTICO) ====================
+with aba_diagnostico:
+    st.title("🧭 Diagnóstico Financeiro")
+    st.caption("Uma leitura prática do mês para transformar os lançamentos em decisão.")
+
+    pontos_risco = 0
+    alertas_diagnostico = []
+    recomendacoes_diagnostico = []
+
+    if renda_base_usuario <= 0:
+        pontos_risco += 3
+        alertas_diagnostico.append("A renda base ainda não foi definida. Sem isso, o diagnóstico perde precisão.")
+        recomendacoes_diagnostico.append("Defina sua renda base na barra lateral antes de tomar decisões maiores.")
+
+    if saldo_projetado_fim_mes < 0:
+        pontos_risco += 3
+        alertas_diagnostico.append("O saldo projetado para o fim do mês está negativo se agenda e fatura forem consideradas.")
+        recomendacoes_diagnostico.append("Revise contas agendadas, gastos variáveis e compras no cartão antes de assumir novos compromissos.")
+    elif saldo_projetado_fim_mes < (renda_base_usuario * 0.10) and renda_base_usuario > 0:
+        pontos_risco += 1
+        alertas_diagnostico.append("O saldo projetado está baixo em relação à renda base.")
+        recomendacoes_diagnostico.append("Evite gastos não essenciais até criar uma folga maior de caixa.")
+
+    if porcentagem_cartao_renda > 0.50:
+        pontos_risco += 3
+        alertas_diagnostico.append("A fatura do cartão já passa de 50% da renda base.")
+        recomendacoes_diagnostico.append("Priorize reduzir cartão e evite parcelamentos novos neste ciclo.")
+    elif porcentagem_cartao_renda > 0.30:
+        pontos_risco += 2
+        alertas_diagnostico.append("A fatura do cartão já passa de 30% da renda base.")
+        recomendacoes_diagnostico.append("Acompanhe o cartão de perto; ele já começa a pressionar o mês seguinte.")
+    elif porcentagem_cartao_renda > 0.15:
+        pontos_risco += 1
+        alertas_diagnostico.append("A fatura do cartão está controlada, mas merece acompanhamento.")
+
+    if porcentagem_essencial > 1.0:
+        pontos_risco += 2
+        alertas_diagnostico.append("Os gastos essenciais ultrapassaram o limite planejado de 50% da renda.")
+        recomendacoes_diagnostico.append("Revise contas fixas, mercado, transporte e compromissos obrigatórios.")
+
+    if porcentagem_estilo > 1.0:
+        pontos_risco += 1
+        alertas_diagnostico.append("Os gastos de estilo de vida ultrapassaram o limite planejado de 30% da renda.")
+        recomendacoes_diagnostico.append("Corte primeiro gastos de lazer, delivery, compras e assinaturas pouco usadas.")
+
+    if indice_comprometimento > 30.0:
+        pontos_risco += 3
+        alertas_diagnostico.append("As parcelas de dívidas passam de 30% da renda base.")
+        recomendacoes_diagnostico.append("Organize uma estratégia de quitação antes de acelerar metas ou compras parceladas.")
+    elif indice_comprometimento > 15.0:
+        pontos_risco += 2
+        alertas_diagnostico.append("As parcelas de dívidas já têm peso relevante na renda.")
+        recomendacoes_diagnostico.append("Evite assumir novas parcelas enquanto a dívida não cair.")
+
+    if porcentagem_consumo_total > 1.0:
+        pontos_risco += 3
+        alertas_diagnostico.append("O consumo total do mês já ultrapassou a renda reconhecida no período.")
+        recomendacoes_diagnostico.append("Reavalie o mês imediatamente: o padrão atual está acima da renda registrada.")
+    elif porcentagem_consumo_total > 0.85:
+        pontos_risco += 2
+        alertas_diagnostico.append("O consumo total já passou de 85% da renda reconhecida no período.")
+        recomendacoes_diagnostico.append("Reduza gastos variáveis para preservar caixa até o fechamento do mês.")
+
+    if pontos_risco >= 8:
+        status_mes = "Crítico"
+        mensagem_status = "Seu mês precisa de intervenção. O app indica pressão alta sobre caixa, cartão ou dívidas."
+        st.error(f"🚨 Status do mês: {status_mes}")
+    elif pontos_risco >= 5:
+        status_mes = "Risco"
+        mensagem_status = "Seu mês ainda pode ser corrigido, mas já existem sinais claros de pressão financeira."
+        st.warning(f"⚠️ Status do mês: {status_mes}")
+    elif pontos_risco >= 2:
+        status_mes = "Atenção"
+        mensagem_status = "Seu mês está administrável, mas alguns indicadores merecem cuidado."
+        st.info(f"🟡 Status do mês: {status_mes}")
+    else:
+        status_mes = "Saudável"
+        mensagem_status = "Seu mês parece saudável com base nos dados registrados até agora."
+        st.success(f"✅ Status do mês: {status_mes}")
+
+    st.write(mensagem_status)
+
+    col_diag1, col_diag2, col_diag3 = st.columns(3)
+    col_diag1.metric("Saldo atual em conta", f"R$ {saldo_real_exibido:,.2f}")
+    col_diag2.metric("Saldo projetado fim do mês", f"R$ {saldo_projetado_fim_mes:,.2f}")
+    col_diag3.metric("Consumo total da renda", f"{porcentagem_consumo_total * 100:.1f}%")
+
+    col_diag4, col_diag5, col_diag6 = st.columns(3)
+    col_diag4.metric("Fatura / renda base", f"{porcentagem_cartao_renda * 100:.1f}%")
+    col_diag5.metric("Dívidas / renda base", f"{indice_comprometimento:.1f}%")
+    col_diag6.metric("Agenda líquida", f"R$ {(agenda_a_receber_mes - agenda_a_pagar_mes):,.2f}")
+
+    st.markdown("---")
+    st.subheader("📌 Leitura dos principais riscos")
+
+    if alertas_diagnostico:
+        for alerta in dict.fromkeys(alertas_diagnostico):
+            st.write(f"- {alerta}")
+    else:
+        st.write("- Nenhum risco relevante identificado com os dados atuais.")
+
+    st.markdown("---")
+    st.subheader("🎯 Próximas ações recomendadas")
+
+    if recomendacoes_diagnostico:
+        for recomendacao in dict.fromkeys(recomendacoes_diagnostico):
+            st.write(f"- {recomendacao}")
+    else:
+        st.write("- Continue registrando as movimentações e mantenha a fatura sob controle.")
+
+    st.markdown("---")
+    st.subheader("📊 Barras de controle")
+
+    st.write(f"💳 Cartão de crédito: {porcentagem_cartao_renda * 100:.1f}% da renda base")
+    st.progress(min(porcentagem_cartao_renda, 1.0))
+
+    st.write(f"🔴 Essencial: {porcentagem_essencial * 100:.1f}% do limite de 50%")
+    st.progress(min(porcentagem_essencial, 1.0))
+
+    st.write(f"🟡 Estilo de vida: {porcentagem_estilo * 100:.1f}% do limite de 30%")
+    st.progress(min(porcentagem_estilo, 1.0))
+
+    st.write(f"📋 Dívidas: {indice_comprometimento:.1f}% da renda base")
+    st.progress(min(indice_comprometimento / 100, 1.0))
 
 # ==================== ABA 1 ====================
 with aba_painel:
@@ -578,9 +714,6 @@ with aba_dividas:
     total_amortizado_historico = sum(amortizacoes_totais_historicas.values())
     divida_restante_real = max(divida_bruta_total - total_amortizado_historico, 0.0)
     
-    comprometimento_parcelas_mensais = sum([d["parcela"] for d in lista_dividas_cadastradas])
-    indice_comprometimento = (comprometimento_parcelas_mensais / renda_base_usuario * 100) if renda_base_usuario > 0 else 0.0
-
     c_div1, c_div2, c_div3 = st.columns(3)
     c_div1.metric(label="🚨 Saldo Devedor Restante", value=f"R$ {divida_restante_real:,.2f}")
     c_div2.metric(label="📉 Comprometimento de Renda", value=f"{indice_comprometimento:.1f}%")
