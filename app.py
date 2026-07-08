@@ -149,7 +149,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # Processamento de Configurações Globais e Metadados
+            # Varredura estrutural única para otimização de performance
             for item in res_data:
                 desc = str(item.get("descricao") or "")
                 subcat = str(item.get("subcategoria") or "")
@@ -189,7 +189,7 @@ if supabase:
                     if "SAÍDA" in tipo_mov.upper() or "📱" in tipo_mov or "💳" in tipo_mov:
                         amortizacoes_totais_historicas[subcat] = amortizacoes_totais_historicas.get(subcat, 0.0) + val_mov
 
-            # --- CORREÇÃO DO FILTRO DE TEMPO REAL ---
+            # --- CONSTRUÇÃO DO REPOSITÓRIO FILTRADO ---
             if not df_todos_dados.empty:
                 df_filtrado = df_todos_dados.copy()
                 df_filtrado = df_filtrado[~df_filtrado["grupo_orcamentario"].astype(str).str.upper().str.contains("CONFIGURAC|CONFIGURAÇÃO|CONFIG", na=False)]
@@ -199,8 +199,6 @@ if supabase:
                 if not df_filtrado.empty:
                     df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
                     df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
-                    
-                    # Filtro estrito por mês do evento (Evita distorções de competência forçada)
                     df_filtrado = df_filtrado[(df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num)]
 
             df_acumulado_mes_cheio = df_filtrado.copy()
@@ -214,7 +212,7 @@ if supabase:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
                 df_filtrado = df_filtrado[df_filtrado["descricao_lower"].str.contains(tag_busca, na=False)]
                 
-            # --- CÁLCULO DA MATEMÁTICA LÍQUIDA SÓLIDA ---
+            # --- CÁLCULO DA MATEMÁTICA LÍQUIDA ---
             if not df_acumulado_mes_cheio.empty:
                 for _, row in df_acumulado_mes_cheio.iterrows():
                     val = float(row["valor"])
@@ -229,13 +227,11 @@ if supabase:
                         if "APORTE" in grupo_item or "🚀" in grupo_item:
                             continue
                         
-                        # Separação correta de fluxos de caixa imediato vs crédito
                         if "💳" in row.get("tipo") or "CARTÃO" in tipo_mov:
                             fatura_acumulada_mes += val
                         else:
                             gastos_dinheiro_caixa += val
                         
-                        # Agrupamento de limites orçamentários
                         if "ESSENCIAL" in grupo_item or "50%" in grupo_item:
                             gastos_essencial += val
                         elif "ESTILO" in grupo_item or "30%" in grupo_item:
@@ -273,6 +269,7 @@ if st.sidebar.button("💾 Salvar/Atualizar Renda Base"):
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
 
+# --- COMPUTAÇÃO DE TETOS ORÇAMENTÁRIOS ---
 LIMITE_ESSENCIAL = renda_base_usuario * 0.50       
 text_limite_essencial = f"R$ {LIMITE_ESSENCIAL:,.2f}" if LIMITE_ESSENCIAL > 0 else "Não Definido"
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
@@ -293,7 +290,7 @@ MAPA_CATEGORIAS = {
         "👶 Pensão / Filho"
     ],
     "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)": [
-        "Lazer, Bares & Restaurantes", 
+        "Lazer, Bares & Restaurants", 
         "Delivery / iFood / Conforto", 
         "Vestuário, Compras & Presentes", 
         "Estética, Cuidados & Academia", 
@@ -313,13 +310,11 @@ aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
     "📊 Painel & Lançamentos", 
     "🐷 Meus Porquinhos & Rumo ao Milhão", 
     "📅 Agenda de Compromissos", 
-    "📋 Gestão de Dívidas & Passivos"
+    "📋 Gestão Dívidas & Passivos"
 ])
 
 # ==================== ABA 1 ====================
 with aba_painel:
-    st.title("Meu Planner Financeiro")
-    
     st.markdown(f"### 👑 Gestão de Teto Orçamentário ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
     c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Dinheiro físico disponível e líquido na sua conta corrente hoje.")
@@ -369,4 +364,245 @@ with aba_painel:
     if criando_novo_porquinho:
         col_n1, col_n2 = st.columns(2)
         nome_novo_fundo = col_n1.text_input("Nome da Nova Meta:", placeholder="Ex: ✈️ Viagem")
-        val_alvo_novo_f
+        val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=50.0)
+
+    # Contextualização segura de inputs e gatilhos dentro do bloco de submissão do Form
+    with st.form("formulario_envio_blindado", clear_on_submit=True):
+        tipo = st.radio("Fluxo Financeiro / Meio de Pagamento:", [
+            "📱 Saída Dinheiro / Pix (Débito)", 
+            "💳 Saída Cartão de Crédito", 
+            "Faturamento ou Receita (Entrada)"
+        ], horizontal=True, disabled=criando_novo_porquinho)
+
+        is_parcelado = False
+        num_parcelas = 1
+        if tipo == "💳 Saída Cartão de Crédito" and not criando_novo_porquinho:
+            is_parcelado = st.checkbox("Esta compra é parcelada?")
+            num_parcelas = st.number_input("Número de parcelas:", min_value=2, max_value=24, value=2, step=1)
+
+        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=0.01, format="%.2f")
+        data_movimento = st.date_input("Data do evento:", datetime.date.today())
+        descricao = st.text_input("Descrição ou Estabelecimento:")
+        satisfacao = st.select_slider("🧠 Nível de necessidade?", options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"], value="2 - Útil / Desejável")
+        botao_enviar = st.form_submit_button("Confirmar Lançamento")
+        
+    if botao_enviar and supabase:
+        final_subcat = nome_novo_fundo if criando_novo_porquinho else categoria
+        final_desc = f"Meta Criada: {nome_novo_fundo}" if criando_novo_porquinho else descricao
+        final_tipo = "Faturamento ou Receita (Entrada)" if criando_novo_porquinho else tipo
+        
+        if valor > 0 and final_desc:
+            try:
+                if is_parcelado and final_tipo == "💳 Saída Cartão de Crédito":
+                    base_date = data_movimento
+                    for i in range(int(num_parcelas)):
+                        num_months = base_date.month - 1 + i
+                        year_offset = num_months // 12
+                        month_offset = (num_months % 12) + 1
+                        
+                        try:
+                            parcel_date = datetime.date(base_date.year + year_offset, month_offset, base_date.day)
+                        except ValueError:
+                            next_month_start = datetime.date(base_date.year + year_offset, month_offset + 1, 1) if month_offset < 12 else datetime.date(base_date.year + year_offset + 1, 1, 1)
+                            parcel_date = next_month_start - datetime.timedelta(days=1)
+                        
+                        desc_parcela = f"{final_desc} ({i+1}/{int(num_parcelas)})"
+                        supabase.table("movimentacoes").insert({
+                            "data": str(parcel_date), "valor": float(valor), "tipo": final_tipo,
+                            "descricao": desc_parcela, "grupo_orcamentario": grupo_orcamentario,
+                            "subcategoria": final_subcat, "satisfacao": satisfacao, "user_id": USER_ID
+                        }).execute()
+                else:
+                    supabase.table("movimentacoes").insert({
+                        "data": str(data_movimento), "valor": float(valor), "tipo": final_tipo,
+                        "descricao": final_desc, "grupo_orcamentario": grupo_orcamentario,
+                        "subcategoria": final_subcat, "satisfacao": satisfacao, "user_id": USER_ID
+                    }).execute()
+                    
+                st.success("✅ Lançamento computado perfeitamente!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar movimentação: {e}")
+
+    # --- 📋 GERENCIAR LANÇAMENTOS DO PERÍODO ---
+    st.markdown("---")
+    st.subheader("📋 Gerenciar Lançamentos do Período")
+    if supabase and not df_filtrado.empty:
+        df_editor = df_filtrado[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
+        df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Meio / Tipo"]
+        
+        dados_editados = st.data_editor(
+            data=df_editor,
+            use_container_width=True,
+            hide_index=True,
+            disabled=["ID", "Grupo", "Subcategoria"],
+            num_rows="dynamic"
+        )
+        
+        if st.button("💾 Salvar Alterações da Tabela"):
+            try:
+                # Correção estrita do bug de nomenclatura (linhas_atuais_ids unificado com 'h')
+                linhas_atuais_ids = set(dados_editados["ID"].dropna().astype(int).tolist())
+                linhas_originais_ids = set(df_editor["ID"].astype(int).tolist())
+                
+                for id_del in (linhas_originais_ids - linhas_atuais_ids):
+                    supabase.table("movimentacoes").delete().eq("id", id_del).execute()
+                    
+                for _, row in dados_editados.iterrows():
+                    if pd.notna(row["ID"]):
+                        row_id = int(row["ID"])
+                        supabase.table("movimentacoes").update({
+                            "descricao": str(row["Descrição"]),
+                            "valor": float(row["Valor (R$)"]),
+                            "tipo": str(row["Meio / Tipo"]),
+                            "data": str(row["Data"])
+                        }).eq("id", row_id).eq("user_id", USER_ID).execute()
+                        
+                st.success("🔄 Alterações guardadas com total estabilidade!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao processar lote de atualizações: {e}")
+    else:
+        st.info("Nenhum lançamento efetuado ou encontrado para os filtros selecionados.")
+
+# ==================== ABA 2 (PORQUINHOS) ====================
+with aba_porquinhos:
+    st.title("🐷 Meus Porquinhos & Metas Individuais")
+    if dicionario_metas_alvo:
+        for nome_meta, valor_alvo in dicionario_metas_alvo.items():
+            guardado = dicionario_aportes_acumulados.get(nome_meta, 0.0)
+            st.subheader(f"{nome_meta}")
+            c1, c2, c3 = st.columns(3)
+            c1.metric(label="Valor Alvo Final", value=f"R$ {valor_alvo:,.2f}")
+            c2.metric(label="Total Já Guardado", value=f"R$ {guardado:,.2f}")
+            c3.metric(label="Quanto Falta", value=f"R$ {max(valor_alvo - guardado, 0.0):,.2f}")
+            st.progress(min(guardado / valor_alvo, 1.0) if valor_alvo > 0 else 0.0)
+            st.markdown("---")
+    else:
+        st.info("Nenhum porquinho ou meta de investimento criada ainda.")
+
+# ==================== ABA 3 (AGENDA) ====================
+with aba_agenda:
+    st.title("📅 Agenda de Compromissos Financeiros")
+    col_ag1, col_ag2 = st.columns(2)
+    col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pagar_mes:,.2f}")
+    col_ag2.metric(label="🟢 Recebimentos Agendados", value=f"R$ {agenda_a_receber_mes:,.2f}")
+    
+    st.markdown("---")
+    col_agenda1, col_agenda2 = st.columns(2)
+    with col_agenda1:
+        st.subheader("📌 Agendar Conta Fixa (A Pagar)")
+        with st.form("form_agenda_pagar", clear_on_submit=True):
+            name_boleto = st.text_input("Nome da Conta / Boleto:")
+            valor_boleto = st.number_input("Valor Estimado (R$):", min_value=0.0, step=0.01)
+            vencimento_boleto = st.date_input("Data de Vencimento:", datetime.date.today())
+            if st.form_submit_button("Agendar Conta Fixa") and name_boleto and valor_boleto > 0:
+                supabase.table("movimentacoes").insert({"data": str(vencimento_boleto), "valor": float(valor_boleto), "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"[AGENDA COMPROMISSO] {name_boleto}", "grupo_orcamentario": "📅 AGENDA: CONTAS A PAGAR", "subcategoria": "Conta Fixa", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
+                st.rerun()
+                
+    with col_agenda2:
+        st.subheader("💰 Agendar Valor (A Receber)")
+        with st.form("form_agenda_receber", clear_on_submit=True):
+            nome_recebivel = st.text_input("O que tem a receber?:")
+            valor_recebivel = st.number_input("Valor (R$):", min_value=0.0, step=0.01)
+            data_recebivel = st.date_input("Data de Expectativa:", datetime.date.today())
+            if st.form_submit_button("Agendar Recebimento") and nome_recebivel and valor_recebivel > 0:
+                supabase.table("movimentacoes").insert({"data": str(data_recebivel), "valor": float(valor_recebivel), "tipo": "Faturamento ou Receita (Entrada)", "descricao": f"[AGENDA COMPROMISSO] {nome_recebivel}", "grupo_orcamentario": "📅 AGENDA: CONTAS A RECEBER", "subcategoria": "Valores a Receber", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
+                st.rerun()
+
+    st.markdown("---")
+    st.subheader("📋 Seus Compromissos Mapeados")
+    if supabase and not df_todos_dados.empty:
+        df_agenda_pura = df_todos_dados[df_todos_dados["grupo_orcamentario"].astype(str).str.upper().str.contains("AGENDA", na=False)].copy()
+        if not df_agenda_pura.empty:
+            df_agenda_pura = df_agenda_pura.sort_values(by="data")
+            
+            for idx, row in df_agenda_pura.iterrows():
+                id_item = int(row["id"])
+                desc_pura = str(row["descricao"]).replace("[AGENDA COMPROMISSO] ", "")
+                valor_item = float(row["valor"])
+                
+                col_c1, col_c2, col_c3 = st.columns([4, 2, 2])
+                col_c1.write(f"📅 **{row['data']}** - {desc_pura} | **R$ {valor_item:,.2f}**")
+                
+                if "PAGAR" in str(row["grupo_orcamentario"]).upper():
+                    col_c2.caption("🔴 A Pagar")
+                    if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
+                        supabase.table("movimentacoes").delete().eq("id", id_item).execute()
+                        supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
+                        st.rerun()
+                else:
+                    col_c2.caption("🟢 A Receber")
+                    if col_c3.button("💰 Receber", key=f"rec_{id_item}"):
+                        supabase.table("movimentacoes").delete().eq("id", id_item).execute()
+                        supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "Faturamento ou Receita (Entrada)", "descricao": f"{desc_pura} (Recebido)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
+                        st.rerun()
+
+# ==================== ABA 4 (GESTÃO DE DÍVIDAS) ====================
+with aba_dividas:
+    st.title("📋 Controle Estrutural de Passivos e Dívidas")
+    
+    divida_bruta_total = sum([d["valor_original"] for d in lista_dividas_cadastradas])
+    total_amortizado_historico = sum(amortizacoes_totais_historicas.values())
+    divida_restante_real = max(divida_bruta_total - total_amortizado_historico, 0.0)
+    
+    comprometimento_parcelas_mensais = sum([d["parcela"] for d in lista_dividas_cadastradas])
+    indice_comprometimento = (comprometimento_parcelas_mensais / renda_base_usuario * 100) if renda_base_usuario > 0 else 0.0
+
+    c_div1, c_div2, c_div3 = st.columns(3)
+    c_div1.metric(label="🚨 Saldo Devedor Restante", value=f"R$ {divida_restante_real:,.2f}")
+    c_div2.metric(label="📉 Comprometimento de Renda", value=f"{indice_comprometimento:.1f}%")
+    c_div3.metric(label="✅ Total Amortizado", value=f"R$ {total_amortizado_historico:,.2f}")
+    
+    if indice_comprometimento > 30.0:
+        st.error(f"⚠️ Atenção Crítica: Suas parcelas de passivos consomem {indice_comprometimento:.1f}% da sua Renda.")
+    elif indice_comprometimento > 0:
+        st.warning(f"⚡ Atenção: {indice_comprometimento:.1f}% da sua renda está comprometida com dívidas.")
+
+    st.markdown("---")
+    st.subheader("🚀 Cadastrar Nova Dívida Estrutural")
+    with st.form("form_cadastro_divida_passiva", clear_on_submit=True):
+        col_d1, col_d2, col_d3 = st.columns(3)
+        nome_credor = col_d1.text_input("Nome da Dívida / Credor:")
+        saldo_devedor_inicial = col_d2.number_input("Valor Total Atual (R$):", min_value=0.0, step=100.0)
+        valor_parcela_mensal = col_d3.number_input("Valor da Parcela Mensal (R$):", min_value=0.0, step=10.0)
+        
+        if st.form_submit_button("Registrar Passivo no Sistema") and nome_credor and saldo_devedor_inicial > 0:
+            try:
+                supabase.table("movimentacoes").insert({
+                    "data": str(hoje), "valor": float(saldo_devedor_inicial), "tipo": "📱 Saída Dinheiro / Pix (Débito)",
+                    "descricao": "[DIVIDA_ATIVA] Registro de Passivo Estrutural", "grupo_orcamentario": "📋 QUITAÇÃO DE DÍVIDAS (ATIVO)",
+                    "subcategoria": nome_credor, "satisfacao": f"{valor_parcela_mensal} - Parcela Cadastrada", "user_id": USER_ID
+                }).execute()
+                st.success("✅ Dívida estrutural integrada!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao registrar passivo: {e}")
+
+    if lista_dividas_cadastradas:
+        st.markdown("---")
+        st.subheader("📊 Evolução e Quitação dos Passivos")
+        
+        for divida in lista_dividas_cadastradas:
+            nome = divida["nome"]
+            original = divida["valor_original"]
+            pago = amortizacoes_totais_historicas.get(nome, 0.0)
+            restante = max(original - pago, 0.0)
+            
+            st.write(f"💳 **{nome}** (Parcela Mensal: R$ {divida['parcela']:,.2f})")
+            col_l1, col_l2, col_l3 = st.columns(3)
+            col_l1.caption(f"Dívida Original: R$ {original:,.2f}")
+            col_l2.caption(f"Restante Atual: R$ {restante:,.2f}")
+            col_l3.caption(f"Amortizado: R$ {pago:,.2f}")
+            
+            progresso = min(pago / original, 1.0) if original > 0 else 0.0
+            st.progress(progresso)
+            
+            if st.button(f"🗑️ Remover Registro da Dívida: {nome}", key=f"del_div_{divida['id']}"):
+                try:
+                    supabase.table("movimentacoes").delete().eq("id", divida["id"]).execute()
+                    st.success("Registro removido do painel!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao deletar: {e}")
+            st.markdown("<br>", unsafe_allow_html=True)
