@@ -14,9 +14,14 @@ except Exception:
     st.error("❌ Erro de Segurança: As credenciais não foram configuradas no painel do Streamlit.")
     st.stop()
 
-@st.cache_resource
 def conectar_banco():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    """Cria um cliente Supabase por sessão do Streamlit.
+
+    Evita compartilhar o mesmo cliente autenticado entre usuários diferentes.
+    """
+    if "_supabase_client" not in st.session_state:
+        st.session_state["_supabase_client"] = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return st.session_state["_supabase_client"]
 
 try:
     supabase: Client = conectar_banco()
@@ -24,24 +29,24 @@ except Exception as e:
     st.error(f"Falha na conexão estrutural: {e}")
     st.stop()
 
+for chave, valor_padrao in {
+    "usuario_logado": None,
+    "user_token": None,
+    "refresh_token": None,
+}.items():
+    if chave not in st.session_state:
+        st.session_state[chave] = valor_padrao
+
 def deslogar_usuario():
     try:
         supabase.auth.sign_out()
-    except:
+    except Exception:
         pass
     st.session_state["usuario_logado"] = None
     st.session_state["user_token"] = None
+    st.session_state["refresh_token"] = None
     st.query_params.clear()
     st.rerun()
-
-if "usuario_logado" not in st.session_state or st.session_state["usuario_logado"] is None:
-    parametros_url = st.query_params
-    if "uid" in parametros_url and "tok" in parametros_url:
-        st.session_state["usuario_logado"] = parametros_url["uid"]
-        st.session_state["user_token"] = parametros_url["tok"]
-    else:
-        st.session_state["usuario_logado"] = None
-        st.session_state["user_token"] = None
 
 # ==================== TELA DE AUTENTICAÇÃO ====================
 if st.session_state["usuario_logado"] is None:
@@ -62,8 +67,8 @@ if st.session_state["usuario_logado"] is None:
                         resposta = supabase.auth.sign_in_with_password({"email": email_login, "password": senha_login})
                         st.session_state["usuario_logado"] = resposta.user.id
                         st.session_state["user_token"] = resposta.session.access_token
-                        st.query_params["uid"] = resposta.user.id
-                        st.query_params["tok"] = resposta.session.access_token
+                        st.session_state["refresh_token"] = resposta.session.refresh_token
+                        st.query_params.clear()
                         st.success("🎉 Acesso autorizado! Redirecionando...")
                         st.rerun()
                     except Exception:
@@ -140,7 +145,16 @@ df_filtrado = pd.DataFrame()
 
 if supabase:
     try:
-        supabase.postgrest.auth(st.session_state["user_token"])
+        if st.session_state.get("user_token") and st.session_state.get("refresh_token"):
+            resposta_sessao = supabase.auth.set_session(
+                st.session_state["user_token"],
+                st.session_state["refresh_token"],
+            )
+            sessao_atualizada = getattr(resposta_sessao, "session", None)
+            if sessao_atualizada:
+                st.session_state["user_token"] = sessao_atualizada.access_token
+                st.session_state["refresh_token"] = sessao_atualizada.refresh_token
+
         resposta_completa = supabase.table("movimentacoes").select("id, data, descricao, grupo_orcamentario, subcategoria, valor, satisfacao, tipo, user_id").eq("user_id", USER_ID).execute()
         
         if resposta_completa and hasattr(resposta_completa, 'data') and resposta_completa.data:
@@ -149,7 +163,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # Varredura estrutural única para otimização de performance
+            # Processamento de Configurações Globais e Metadados
             for item in res_data:
                 desc = str(item.get("descricao") or "")
                 subcat = str(item.get("subcategoria") or "")
@@ -189,7 +203,7 @@ if supabase:
                     if "SAÍDA" in tipo_mov.upper() or "📱" in tipo_mov or "💳" in tipo_mov:
                         amortizacoes_totais_historicas[subcat] = amortizacoes_totais_historicas.get(subcat, 0.0) + val_mov
 
-            # --- CONSTRUÇÃO DO REPOSITÓRIO FILTRADO ---
+            # --- CORREÇÃO DO FILTRO DE TEMPO REAL ---
             if not df_todos_dados.empty:
                 df_filtrado = df_todos_dados.copy()
                 df_filtrado = df_filtrado[~df_filtrado["grupo_orcamentario"].astype(str).str.upper().str.contains("CONFIGURAC|CONFIGURAÇÃO|CONFIG", na=False)]
@@ -199,6 +213,8 @@ if supabase:
                 if not df_filtrado.empty:
                     df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
                     df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
+                    
+                    # Filtro estrito por mês do evento (Evita distorções de competência forçada)
                     df_filtrado = df_filtrado[(df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num)]
 
             df_acumulado_mes_cheio = df_filtrado.copy()
@@ -212,7 +228,7 @@ if supabase:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
                 df_filtrado = df_filtrado[df_filtrado["descricao_lower"].str.contains(tag_busca, na=False)]
                 
-            # --- CÁLCULO DA MATEMÁTICA LÍQUIDA ---
+            # --- CÁLCULO DA MATEMÁTICA LÍQUIDA SÓLIDA ---
             if not df_acumulado_mes_cheio.empty:
                 for _, row in df_acumulado_mes_cheio.iterrows():
                     val = float(row["valor"])
@@ -227,11 +243,13 @@ if supabase:
                         if "APORTE" in grupo_item or "🚀" in grupo_item:
                             continue
                         
-                        if "💳" in row.get("tipo") or "CARTÃO" in tipo_mov:
+                        # Separação correta de fluxos de caixa imediato vs crédito
+                        if "💳" in str(row.get("tipo") or "") or "CARTÃO" in tipo_mov:
                             fatura_acumulada_mes += val
                         else:
                             gastos_dinheiro_caixa += val
                         
+                        # Agrupamento de limites orçamentários
                         if "ESSENCIAL" in grupo_item or "50%" in grupo_item:
                             gastos_essencial += val
                         elif "ESTILO" in grupo_item or "30%" in grupo_item:
@@ -269,7 +287,6 @@ if st.sidebar.button("💾 Salvar/Atualizar Renda Base"):
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
 
-# --- COMPUTAÇÃO DE TETOS ORÇAMENTÁRIOS ---
 LIMITE_ESSENCIAL = renda_base_usuario * 0.50       
 text_limite_essencial = f"R$ {LIMITE_ESSENCIAL:,.2f}" if LIMITE_ESSENCIAL > 0 else "Não Definido"
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
@@ -290,7 +307,7 @@ MAPA_CATEGORIAS = {
         "👶 Pensão / Filho"
     ],
     "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)": [
-        "Lazer, Bares & Restaurants", 
+        "Lazer, Bares & Restaurantes", 
         "Delivery / iFood / Conforto", 
         "Vestuário, Compras & Presentes", 
         "Estética, Cuidados & Academia", 
@@ -310,11 +327,13 @@ aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
     "📊 Painel & Lançamentos", 
     "🐷 Meus Porquinhos & Rumo ao Milhão", 
     "📅 Agenda de Compromissos", 
-    "📋 Gestão Dívidas & Passivos"
+    "📋 Gestão de Dívidas & Passivos"
 ])
 
 # ==================== ABA 1 ====================
 with aba_painel:
+    st.title("Meu Planner Financeiro")
+    
     st.markdown(f"### 👑 Gestão de Teto Orçamentário ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
     c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Dinheiro físico disponível e líquido na sua conta corrente hoje.")
@@ -366,67 +385,76 @@ with aba_painel:
         nome_novo_fundo = col_n1.text_input("Nome da Nova Meta:", placeholder="Ex: ✈️ Viagem")
         val_alvo_novo_fundo = col_n2.number_input("Valor Alvo da Meta (R$):", min_value=0.0, value=1000.00, step=50.0)
 
-    # Contextualização segura de inputs e gatilhos dentro do bloco de submissão do Form
+    tipo = st.radio("Fluxo Financeiro / Meio de Pagamento:", [
+        "📱 Saída Dinheiro / Pix (Débito)", 
+        "💳 Saída Cartão de Crédito", 
+        "Faturamento ou Receita (Entrada)"
+    ], horizontal=True, disabled=criando_novo_porquinho)
+
+    is_parcelado = False
+    num_parcelas = 1
+    if tipo == "💳 Saída Cartão de Crédito" and not criando_novo_porquinho:
+        col_p1, col_p2 = st.columns(2)
+        is_parcelado = col_p1.checkbox("Esta compra é parcelada?")
+        if is_parcelado:
+            num_parcelas = col_p2.number_input("Número de parcelas:", min_value=2, max_value=24, value=2, step=1)
+
     with st.form("formulario_envio_blindado", clear_on_submit=True):
-        tipo = st.radio("Fluxo Financeiro / Meio de Pagamento:", [
-            "📱 Saída Dinheiro / Pix (Débito)", 
-            "💳 Saída Cartão de Crédito", 
-            "Faturamento ou Receita (Entrada)"
-        ], horizontal=True, disabled=criando_novo_porquinho)
-
-        is_parcelado = False
-        num_parcelas = 1
-        if tipo == "💳 Saída Cartão de Crédito" and not criando_novo_porquinho:
-            is_parcelado = st.checkbox("Esta compra é parcelada?")
-            num_parcelas = st.number_input("Número de parcelas:", min_value=2, max_value=24, value=2, step=1)
-
-        valor = st.number_input("Qual o valor da operação? (R$)", min_value=0.0, step=0.01, format="%.2f")
+        valor = st.number_input("Qual o valor total da operação? (R$)", min_value=0.0, step=0.01, format="%.2f") if not is_parcelado else st.number_input("Qual o valor de CADA PARCELA? (R$)", min_value=0.0, step=0.01, format="%.2f")
         data_movimento = st.date_input("Data do evento:", datetime.date.today())
         descricao = st.text_input("Descrição ou Estabelecimento:")
         satisfacao = st.select_slider("🧠 Nível de necessidade?", options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"], value="2 - Útil / Desejável")
         botao_enviar = st.form_submit_button("Confirmar Lançamento")
         
     if botao_enviar and supabase:
-        final_subcat = nome_novo_fundo if criando_novo_porquinho else categoria
-        final_desc = f"Meta Criada: {nome_novo_fundo}" if criando_novo_porquinho else descricao
+        final_subcat = nome_novo_fundo.strip() if criando_novo_porquinho else categoria
+        final_desc = f"Meta Criada: {final_subcat}" if criando_novo_porquinho else descricao.strip()
         final_tipo = "Faturamento ou Receita (Entrada)" if criando_novo_porquinho else tipo
-        
-        if valor > 0 and final_desc:
+        valor_para_salvar = float(val_alvo_novo_fundo) if criando_novo_porquinho else float(valor)
+
+        if criando_novo_porquinho and not final_subcat:
+            st.warning("Informe o nome da nova meta/porquinho.")
+        elif valor_para_salvar <= 0:
+            st.warning("Informe um valor maior que zero.")
+        elif not final_desc:
+            st.warning("Informe uma descrição para o lançamento.")
+        else:
             try:
                 if is_parcelado and final_tipo == "💳 Saída Cartão de Crédito":
                     base_date = data_movimento
-                    for i in range(int(num_parcelas)):
+                    for i in range(num_parcelas):
                         num_months = base_date.month - 1 + i
                         year_offset = num_months // 12
                         month_offset = (num_months % 12) + 1
-                        
+
                         try:
                             parcel_date = datetime.date(base_date.year + year_offset, month_offset, base_date.day)
                         except ValueError:
                             next_month_start = datetime.date(base_date.year + year_offset, month_offset + 1, 1) if month_offset < 12 else datetime.date(base_date.year + year_offset + 1, 1, 1)
                             parcel_date = next_month_start - datetime.timedelta(days=1)
-                        
-                        desc_parcela = f"{final_desc} ({i+1}/{int(num_parcelas)})"
+
+                        desc_parcela = f"{final_desc} ({i+1}/{num_parcelas})"
                         supabase.table("movimentacoes").insert({
-                            "data": str(parcel_date), "valor": float(valor), "tipo": final_tipo,
+                            "data": str(parcel_date), "valor": valor_para_salvar, "tipo": final_tipo,
                             "descricao": desc_parcela, "grupo_orcamentario": grupo_orcamentario,
                             "subcategoria": final_subcat, "satisfacao": satisfacao, "user_id": USER_ID
                         }).execute()
                 else:
                     supabase.table("movimentacoes").insert({
-                        "data": str(data_movimento), "valor": float(valor), "tipo": final_tipo,
+                        "data": str(data_movimento), "valor": valor_para_salvar, "tipo": final_tipo,
                         "descricao": final_desc, "grupo_orcamentario": grupo_orcamentario,
                         "subcategoria": final_subcat, "satisfacao": satisfacao, "user_id": USER_ID
                     }).execute()
-                    
+
                 st.success("✅ Lançamento computado perfeitamente!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar movimentação: {e}")
 
-    # --- 📋 GERENCIAR LANÇAMENTOS DO PERÍODO ---
+    # --- 📋 SEÇÃO DE LANÇAMENTOS ---
     st.markdown("---")
     st.subheader("📋 Gerenciar Lançamentos do Período")
+    
     if supabase and not df_filtrado.empty:
         df_editor = df_filtrado[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
         df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Meio / Tipo"]
@@ -436,17 +464,16 @@ with aba_painel:
             use_container_width=True,
             hide_index=True,
             disabled=["ID", "Grupo", "Subcategoria"],
-            num_rows="dynamic"
+            num_rows="fixed"
         )
         
         if st.button("💾 Salvar Alterações da Tabela"):
             try:
-                # Correção estrita do bug de nomenclatura (linhas_atuais_ids unificado com 'h')
                 linhas_atuais_ids = set(dados_editados["ID"].dropna().astype(int).tolist())
                 linhas_originais_ids = set(df_editor["ID"].astype(int).tolist())
                 
                 for id_del in (linhas_originais_ids - linhas_atuais_ids):
-                    supabase.table("movimentacoes").delete().eq("id", id_del).execute()
+                    supabase.table("movimentacoes").delete().eq("id", id_del).eq("user_id", USER_ID).execute()
                     
                 for _, row in dados_editados.iterrows():
                     if pd.notna(row["ID"]):
@@ -468,9 +495,12 @@ with aba_painel:
 # ==================== ABA 2 (PORQUINHOS) ====================
 with aba_porquinhos:
     st.title("🐷 Meus Porquinhos & Metas Individuais")
+    total_patrimonio_guardado = 0.0
+    
     if dicionario_metas_alvo:
         for nome_meta, valor_alvo in dicionario_metas_alvo.items():
             guardado = dicionario_aportes_acumulados.get(nome_meta, 0.0)
+            total_patrimonio_guardado += guardado
             st.subheader(f"{nome_meta}")
             c1, c2, c3 = st.columns(3)
             c1.metric(label="Valor Alvo Final", value=f"R$ {valor_alvo:,.2f}")
@@ -484,6 +514,8 @@ with aba_porquinhos:
 # ==================== ABA 3 (AGENDA) ====================
 with aba_agenda:
     st.title("📅 Agenda de Compromissos Financeiros")
+    
+    st.markdown("### 📊 Fluxo de Caixa Projetado da Agenda")
     col_ag1, col_ag2 = st.columns(2)
     col_ag1.metric(label="📉 Contas Agendadas a Pagar", value=f"R$ {agenda_a_pagar_mes:,.2f}")
     col_ag2.metric(label="🟢 Recebimentos Agendados", value=f"R$ {agenda_a_receber_mes:,.2f}")
@@ -528,13 +560,13 @@ with aba_agenda:
                 if "PAGAR" in str(row["grupo_orcamentario"]).upper():
                     col_c2.caption("🔴 A Pagar")
                     if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
-                        supabase.table("movimentacoes").delete().eq("id", id_item).execute()
+                        supabase.table("movimentacoes").delete().eq("id", id_item).eq("user_id", USER_ID).execute()
                         supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
                         st.rerun()
                 else:
                     col_c2.caption("🟢 A Receber")
                     if col_c3.button("💰 Receber", key=f"rec_{id_item}"):
-                        supabase.table("movimentacoes").delete().eq("id", id_item).execute()
+                        supabase.table("movimentacoes").delete().eq("id", id_item).eq("user_id", USER_ID).execute()
                         supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "Faturamento ou Receita (Entrada)", "descricao": f"{desc_pura} (Recebido)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
                         st.rerun()
 
@@ -600,7 +632,7 @@ with aba_dividas:
             
             if st.button(f"🗑️ Remover Registro da Dívida: {nome}", key=f"del_div_{divida['id']}"):
                 try:
-                    supabase.table("movimentacoes").delete().eq("id", divida["id"]).execute()
+                    supabase.table("movimentacoes").delete().eq("id", divida["id"]).eq("user_id", USER_ID).execute()
                     st.success("Registro removido do painel!")
                     st.rerun()
                 except Exception as e:
