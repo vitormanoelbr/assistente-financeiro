@@ -94,7 +94,7 @@ USER_ID = st.session_state["usuario_logado"]
 if st.sidebar.button("🚪 Sair da Conta"):
     deslogar_usuario()
 
-# --- 📅 FILTROS DE TEMPO & TAGS ---
+# --- 📅 FILTROS DE TEMPO & TAGS (Movidos para o topo para evitar NameError) ---
 st.sidebar.header("📅 Filtros do Painel")
 hoje = datetime.date.today()
 ano_selected = st.sidebar.selectbox("Ano de Análise:", [hoje.year, hoje.year - 1, hoje.year + 1], index=0)
@@ -149,7 +149,7 @@ if supabase:
             df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
             df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
             
-            # Processamento de Configurações Globais e Metadados
+            # Varredura estrutural primária
             for item in res_data:
                 desc = str(item.get("descricao") or "")
                 subcat = str(item.get("subcategoria") or "")
@@ -189,7 +189,7 @@ if supabase:
                     if "SAÍDA" in tipo_mov.upper() or "📱" in tipo_mov or "💳" in tipo_mov:
                         amortizacoes_totais_historicas[subcat] = amortizacoes_totais_historicas.get(subcat, 0.0) + val_mov
 
-            # --- CORREÇÃO DO FILTRO DE TEMPO REAL ---
+            # --- CONSTRUÇÃO DO REPOSITÓRIO FILTRADO ---
             if not df_todos_dados.empty:
                 df_filtrado = df_todos_dados.copy()
                 df_filtrado = df_filtrado[~df_filtrado["grupo_orcamentario"].astype(str).str.upper().str.contains("CONFIGURAC|CONFIGURAÇÃO|CONFIG", na=False)]
@@ -200,7 +200,6 @@ if supabase:
                     df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
                     df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
                     
-                    # Filtro estrito por mês do evento (Evita distorções de competência forçada)
                     df_filtrado = df_filtrado[(df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num)]
 
             df_acumulado_mes_cheio = df_filtrado.copy()
@@ -214,7 +213,7 @@ if supabase:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
                 df_filtrado = df_filtrado[df_filtrado["descricao_lower"].str.contains(tag_busca, na=False)]
                 
-            # --- CÁLCULO DA MATEMÁTICA LÍQUIDA SÓLIDA ---
+            # --- PROCESSAMENTO MATEMÁTICO REAL DO PERÍODO ---
             if not df_acumulado_mes_cheio.empty:
                 for _, row in df_acumulado_mes_cheio.iterrows():
                     val = float(row["valor"])
@@ -229,13 +228,11 @@ if supabase:
                         if "APORTE" in grupo_item or "🚀" in grupo_item:
                             continue
                         
-                        # Separação correta de fluxos de caixa imediato vs crédito
                         if "💳" in row.get("tipo") or "CARTÃO" in tipo_mov:
                             fatura_acumulada_mes += val
                         else:
                             gastos_dinheiro_caixa += val
                         
-                        # Agrupamento de limites orçamentários
                         if "ESSENCIAL" in grupo_item or "50%" in grupo_item:
                             gastos_essencial += val
                         elif "ESTILO" in grupo_item or "30%" in grupo_item:
@@ -252,9 +249,9 @@ if supabase:
         else:
             st.error(f"Erro no processamento dos dados: {e}")
 
-# --- ORIGENS DE VERDADE MATEMÁTICA ---
+# ==================== ENGENHARIA DE MATEMÁTICA LÍQUIDA PREMIUM ====================
 saldo_real_exibido = renda_base_usuario + faturamento_extra_mes - gastos_dinheiro_caixa
-total_consumido_orcamento = gastos_dinheiro_caixa + fatura_acumulada_mes
+resultado_liquido_mes = (renda_base_usuario + faturamento_extra_mes) - (gastos_dinheiro_caixa + fatura_acumulada_mes)
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Configurações do Usuário")
@@ -322,18 +319,22 @@ with aba_painel:
     
     st.markdown(f"### 👑 Gestão de Teto Orçamentário ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Dinheiro físico disponível e líquido na sua conta corrente hoje.")
-    c_caixa2.metric(label="📈 Faturamento Extra Capturado", value=f"R$ {faturamento_extra_mes:,.2f}", help="Total de receitas extras geradas neste ciclo mensal.")
-    c_caixa3.metric(label="📉 Limite Total Consumido", value=f"R$ {total_consumido_orcamento:,.2f}", help="O impacto total real que seu padrão de vida gerou no seu orçamento (Dinheiro + Cartão).")
-
-    st.markdown("---")
-    col_cc_info1, col_cc_info2 = st.columns([2, 5])
-    col_cc_info1.write(f"💳 **Fatura Acumulada:** R$ {fatura_acumulada_mes:,.2f}")
     
-    porcentagem_cartao_renda = (fatura_acumulada_mes / renda_base_usuario) if renda_base_usuario > 0 else 0.0
-    col_cc_info2.progress(min(porcentagem_cartao_renda, 1.0))
-    if porcentagem_cartao_renda > 0.5:
-        st.caption("⚠️ *Aviso de Risco:* Sua fatura atual já compromete mais de 50% da sua renda base fixa.")
+    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", 
+                    help="O dinheiro físico e líquido disponível em conta corrente (Renda + Extras - Gastos no Pix/Débito).")
+    
+    c_caixa2.metric(label="💳 Fatura do Cartão", value=f"R$ {fatura_acumulada_mes:,.2f}", 
+                    help="O acumulado de gastos efetuados estritamente na modalidade de crédito para este mês.")
+    
+    if resultado_liquido_mes >= 0:
+        c_caixa3.metric(label="⚖️ Resultado Líquido (Margem)", value=f"R$ {resultado_liquido_mes:,.2f}", 
+                        help="Lucro real do mês (Faturamento Total - Despesas Totais).")
+    else:
+        c_caixa3.metric(label="⚖️ Resultado Líquido (Defasagem)", value=f"R$ {resultado_liquido_mes:,.2f}", 
+                        delta=f"Prejuízo de R$ {abs(resultado_liquido_mes):,.2f}", delta_color="inverse",
+                        help="Você gastou mais do que faturou neste mês.")
+
+    st.caption(f"ℹ️ **Resumo do Período:** Renda Base Fixa: R$ {renda_base_usuario:,.2f} | Rendas Extras Capturadas: R$ {faturamento_extra_mes:,.2f}")
 
     st.markdown("---")
     st.subheader("📊 Painel de Limites Orçamentários")
@@ -451,7 +452,7 @@ with aba_painel:
                 linhas_atuais_ids = set(dados_editados["ID"].dropna().astype(int).tolist())
                 linhas_originais_ids = set(df_editor["ID"].astype(int).tolist())
                 
-                for id_del in (linhas_originais_ids - lines_atuais_ids):
+                for id_del in (linhas_originais_ids - linhas_atuais_ids):
                     supabase.table("movimentacoes").delete().eq("id", id_del).execute()
                     
                 for _, row in dados_editados.iterrows():
