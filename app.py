@@ -278,6 +278,154 @@ porcentagem_gasto_caixa = (gastos_dinheiro_caixa / receita_total_reconhecida_mes
 porcentagem_essencial = (gastos_essencial / (renda_base_usuario * 0.50)) if renda_base_usuario > 0 else 0.0
 porcentagem_estilo = (gastos_estilo / (renda_base_usuario * 0.30)) if renda_base_usuario > 0 else 0.0
 
+
+# --- PROJEÇÃO DE FLUXO DE CAIXA FUTURO ---
+def ultimo_dia_do_mes(data_ref: datetime.date) -> datetime.date:
+    if data_ref.month == 12:
+        proximo_mes = datetime.date(data_ref.year + 1, 1, 1)
+    else:
+        proximo_mes = datetime.date(data_ref.year, data_ref.month + 1, 1)
+    return proximo_mes - datetime.timedelta(days=1)
+
+
+def eh_entrada(tipo_movimento: str) -> bool:
+    tipo_normalizado = str(tipo_movimento or "").upper()
+    return any(palavra in tipo_normalizado for palavra in ["ENTRADA", "FATURAMENTO", "RECEITA"])
+
+
+def eh_cartao(tipo_movimento: str) -> bool:
+    tipo_normalizado = str(tipo_movimento or "").upper()
+    return "💳" in str(tipo_movimento or "") or "CARTÃO" in tipo_normalizado or "CARTAO" in tipo_normalizado
+
+
+def eh_saida_caixa(tipo_movimento: str) -> bool:
+    tipo_normalizado = str(tipo_movimento or "").upper()
+    return any(palavra in tipo_normalizado for palavra in ["SAÍDA", "SAIDA", "PIX", "DÉBITO", "DEBITO"]) or "📱" in str(tipo_movimento or "")
+
+
+saldo_base_fluxo_futuro = renda_base_usuario
+entradas_realizadas_ate_hoje = 0.0
+saidas_caixa_realizadas_ate_hoje = 0.0
+fatura_estimada_mes_atual = 0.0
+eventos_fluxo_futuro = []
+limite_fluxo_futuro = hoje + datetime.timedelta(days=30)
+fim_mes_atual = ultimo_dia_do_mes(hoje)
+
+if not df_todos_dados.empty:
+    df_fluxo_base = df_todos_dados.copy()
+    df_fluxo_base["data_dt"] = pd.to_datetime(df_fluxo_base["data"]).dt.date
+
+    for _, item_fluxo in df_fluxo_base.iterrows():
+        data_item = item_fluxo["data_dt"]
+        valor_item = float(item_fluxo.get("valor") or 0.0)
+        descricao_item = str(item_fluxo.get("descricao") or "Sem descrição")
+        grupo_item_original = str(item_fluxo.get("grupo_orcamentario") or "")
+        grupo_item = grupo_item_original.upper()
+        tipo_item = str(item_fluxo.get("tipo") or "")
+
+        if valor_item <= 0:
+            continue
+        if "CONFIG" in grupo_item or "[CONFIG_PERFIL]" in descricao_item or "[DIVIDA_ATIVA]" in descricao_item:
+            continue
+        if "APORTE" in grupo_item or "🚀" in grupo_item:
+            continue
+
+        # Base de caixa de hoje: considera apenas movimentos já realizados no mês atual.
+        if hoje.replace(day=1) <= data_item <= hoje and "AGENDA" not in grupo_item:
+            if eh_entrada(tipo_item):
+                entradas_realizadas_ate_hoje += valor_item
+            elif eh_saida_caixa(tipo_item) and not eh_cartao(tipo_item):
+                saidas_caixa_realizadas_ate_hoje += valor_item
+
+        # Fatura estimada do mês atual: posicionada no fim do mês por não haver cadastro de vencimento de cartão.
+        if hoje.replace(day=1) <= data_item <= fim_mes_atual and eh_cartao(tipo_item) and "AGENDA" not in grupo_item:
+            fatura_estimada_mes_atual += valor_item
+
+        # Agenda futura a pagar/receber.
+        if hoje <= data_item <= limite_fluxo_futuro and "AGENDA" in grupo_item:
+            descricao_limpa = descricao_item.replace("[AGENDA COMPROMISSO] ", "")
+            if "PAGAR" in grupo_item:
+                eventos_fluxo_futuro.append({
+                    "Data": data_item,
+                    "Descrição": descricao_limpa,
+                    "Origem": "Agenda - A pagar",
+                    "Entrada": 0.0,
+                    "Saída": valor_item,
+                })
+            elif "RECEBER" in grupo_item:
+                eventos_fluxo_futuro.append({
+                    "Data": data_item,
+                    "Descrição": descricao_limpa,
+                    "Origem": "Agenda - A receber",
+                    "Entrada": valor_item,
+                    "Saída": 0.0,
+                })
+            continue
+
+        # Movimentos futuros já registrados fora da agenda.
+        if hoje < data_item <= limite_fluxo_futuro and "AGENDA" not in grupo_item:
+            if eh_entrada(tipo_item):
+                eventos_fluxo_futuro.append({
+                    "Data": data_item,
+                    "Descrição": descricao_item,
+                    "Origem": "Entrada futura registrada",
+                    "Entrada": valor_item,
+                    "Saída": 0.0,
+                })
+            elif eh_saida_caixa(tipo_item) and not eh_cartao(tipo_item):
+                eventos_fluxo_futuro.append({
+                    "Data": data_item,
+                    "Descrição": descricao_item,
+                    "Origem": "Saída futura registrada",
+                    "Entrada": 0.0,
+                    "Saída": valor_item,
+                })
+            elif data_item > fim_mes_atual and eh_cartao(tipo_item):
+                eventos_fluxo_futuro.append({
+                    "Data": data_item,
+                    "Descrição": descricao_item,
+                    "Origem": "Cartão futuro registrado",
+                    "Entrada": 0.0,
+                    "Saída": valor_item,
+                })
+
+saldo_base_fluxo_futuro = renda_base_usuario + entradas_realizadas_ate_hoje - saidas_caixa_realizadas_ate_hoje
+
+if fatura_estimada_mes_atual > 0:
+    eventos_fluxo_futuro.append({
+        "Data": min(fim_mes_atual, limite_fluxo_futuro),
+        "Descrição": "Fatura estimada do cartão do mês atual",
+        "Origem": "Cartão - estimativa mensal",
+        "Entrada": 0.0,
+        "Saída": fatura_estimada_mes_atual,
+    })
+
+df_fluxo_futuro = pd.DataFrame(eventos_fluxo_futuro)
+if not df_fluxo_futuro.empty:
+    df_fluxo_futuro = df_fluxo_futuro.sort_values(by=["Data", "Origem", "Descrição"]).reset_index(drop=True)
+    saldo_corrente_projetado = saldo_base_fluxo_futuro
+    saldos_projetados = []
+    for _, evento in df_fluxo_futuro.iterrows():
+        saldo_corrente_projetado += float(evento["Entrada"]) - float(evento["Saída"])
+        saldos_projetados.append(saldo_corrente_projetado)
+    df_fluxo_futuro["Saldo Projetado"] = saldos_projetados
+else:
+    df_fluxo_futuro = pd.DataFrame(columns=["Data", "Descrição", "Origem", "Entrada", "Saída", "Saldo Projetado"])
+
+
+def calcular_saldo_horizonte(dias: int) -> float:
+    data_limite = hoje + datetime.timedelta(days=dias)
+    if df_fluxo_futuro.empty:
+        return saldo_base_fluxo_futuro
+    eventos_periodo = df_fluxo_futuro[df_fluxo_futuro["Data"] <= data_limite]
+    entrada_periodo = float(eventos_periodo["Entrada"].sum()) if not eventos_periodo.empty else 0.0
+    saida_periodo = float(eventos_periodo["Saída"].sum()) if not eventos_periodo.empty else 0.0
+    return saldo_base_fluxo_futuro + entrada_periodo - saida_periodo
+
+saldo_projetado_7_dias = calcular_saldo_horizonte(7)
+saldo_projetado_15_dias = calcular_saldo_horizonte(15)
+saldo_projetado_30_dias = calcular_saldo_horizonte(30)
+
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Configurações do Usuário")
 
@@ -333,8 +481,9 @@ MAPA_CATEGORIAS = {
     ]
 }
 
-aba_diagnostico, aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
+aba_diagnostico, aba_fluxo_futuro, aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
     "🧭 Diagnóstico Financeiro",
+    "📅 Fluxo de Caixa Futuro",
     "📊 Painel & Lançamentos", 
     "🐷 Meus Porquinhos & Rumo ao Milhão", 
     "📅 Agenda de Compromissos", 
@@ -465,6 +614,109 @@ with aba_diagnostico:
 
     st.write(f"📋 Dívidas: {indice_comprometimento:.1f}% da renda base")
     st.progress(min(indice_comprometimento / 100, 1.0))
+
+
+# ==================== ABA 1 (FLUXO DE CAIXA FUTURO) ====================
+with aba_fluxo_futuro:
+    st.title("📅 Fluxo de Caixa Futuro")
+    st.caption("Projeção dos próximos 7, 15 e 30 dias com base em agenda, fatura estimada e movimentações futuras já registradas.")
+
+    if ano_selected != hoje.year or mes_selected_num != hoje.month:
+        st.warning(
+            "Você está com um mês diferente do mês atual selecionado nos filtros laterais. "
+            "Esta aba usa a data de hoje como referência para projeção futura."
+        )
+
+    col_fluxo1, col_fluxo2, col_fluxo3, col_fluxo4 = st.columns(4)
+    col_fluxo1.metric("Caixa base estimado hoje", f"R$ {saldo_base_fluxo_futuro:,.2f}")
+    col_fluxo2.metric("Em 7 dias", f"R$ {saldo_projetado_7_dias:,.2f}")
+    col_fluxo3.metric("Em 15 dias", f"R$ {saldo_projetado_15_dias:,.2f}")
+    col_fluxo4.metric("Em 30 dias", f"R$ {saldo_projetado_30_dias:,.2f}")
+
+    st.markdown("---")
+
+    if saldo_projetado_30_dias < 0:
+        st.error("🚨 Atenção: pela projeção atual, o caixa pode ficar negativo nos próximos 30 dias.")
+    elif saldo_projetado_15_dias < 0:
+        st.warning("⚠️ Atenção: o caixa pode ficar negativo antes de completar 15 dias.")
+    elif saldo_projetado_7_dias < 0:
+        st.warning("⚠️ Atenção: o caixa pode ficar negativo já nos próximos 7 dias.")
+    elif saldo_projetado_30_dias < renda_base_usuario * 0.10 and renda_base_usuario > 0:
+        st.info("🟡 O caixa continua positivo, mas com pouca folga para os próximos 30 dias.")
+    else:
+        st.success("✅ A projeção de caixa dos próximos 30 dias está positiva com os dados atuais.")
+
+    st.markdown("### 🔎 Como essa projeção foi calculada")
+    st.write(
+        "O caixa base considera renda mensal cadastrada, entradas já realizadas no mês atual e saídas em dinheiro/Pix/débito já realizadas. "
+        "Depois o sistema soma recebimentos futuros e subtrai contas agendadas, saídas futuras registradas e uma estimativa de fatura do cartão."
+    )
+
+    col_calc1, col_calc2, col_calc3 = st.columns(3)
+    col_calc1.metric("Entradas realizadas no mês", f"R$ {entradas_realizadas_ate_hoje:,.2f}")
+    col_calc2.metric("Saídas em caixa realizadas", f"R$ {saidas_caixa_realizadas_ate_hoje:,.2f}")
+    col_calc3.metric("Fatura estimada atual", f"R$ {fatura_estimada_mes_atual:,.2f}")
+
+    st.markdown("---")
+    st.subheader("📍 Eventos que impactam o caixa")
+
+    if df_fluxo_futuro.empty:
+        st.info("Nenhum evento futuro encontrado nos próximos 30 dias. Cadastre contas na Agenda ou compras/parcelas futuras para enriquecer a projeção.")
+    else:
+        horizonte_escolhido = st.radio(
+            "Horizonte de visualização:",
+            [7, 15, 30],
+            horizontal=True,
+            format_func=lambda dias: f"Próximos {dias} dias",
+        )
+        data_limite_visual = hoje + datetime.timedelta(days=horizonte_escolhido)
+        df_fluxo_visual = df_fluxo_futuro[df_fluxo_futuro["Data"] <= data_limite_visual].copy()
+
+        if df_fluxo_visual.empty:
+            st.info(f"Nenhum evento previsto para os próximos {horizonte_escolhido} dias.")
+        else:
+            df_fluxo_tabela = df_fluxo_visual.copy()
+            df_fluxo_tabela["Data"] = df_fluxo_tabela["Data"].astype(str)
+            df_fluxo_tabela["Entrada"] = df_fluxo_tabela["Entrada"].map(lambda v: f"R$ {v:,.2f}")
+            df_fluxo_tabela["Saída"] = df_fluxo_tabela["Saída"].map(lambda v: f"R$ {v:,.2f}")
+            df_fluxo_tabela["Saldo Projetado"] = df_fluxo_tabela["Saldo Projetado"].map(lambda v: f"R$ {v:,.2f}")
+            st.dataframe(df_fluxo_tabela, use_container_width=True, hide_index=True)
+
+            df_grafico_fluxo = df_fluxo_visual.groupby("Data", as_index=False).agg({"Entrada": "sum", "Saída": "sum"})
+            saldo_grafico = saldo_base_fluxo_futuro
+            saldos_por_dia = []
+            for _, linha_dia in df_grafico_fluxo.iterrows():
+                saldo_grafico += float(linha_dia["Entrada"]) - float(linha_dia["Saída"])
+                saldos_por_dia.append(saldo_grafico)
+            df_grafico_fluxo["Saldo Projetado"] = saldos_por_dia
+
+            st.markdown("### 📈 Curva de saldo projetado")
+            fig_fluxo = px.line(
+                df_grafico_fluxo,
+                x="Data",
+                y="Saldo Projetado",
+                markers=True,
+                title="Saldo projetado ao longo do período",
+            )
+            fig_fluxo.update_layout(margin=dict(t=50, b=10, l=10, r=10))
+            st.plotly_chart(fig_fluxo, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("🎯 Leitura prática")
+
+    if saldo_projetado_30_dias < 0:
+        st.write("- O foco agora deve ser preservar caixa. Evite compras parceladas, revise agenda de pagamentos e antecipe recebimentos se possível.")
+    elif fatura_estimada_mes_atual > renda_base_usuario * 0.50 and renda_base_usuario > 0:
+        st.write("- A fatura estimada está pesada. Mesmo com caixa positivo, o cartão pode pressionar o próximo ciclo.")
+    elif not df_fluxo_futuro.empty and float(df_fluxo_futuro["Saída"].sum()) > float(df_fluxo_futuro["Entrada"].sum()):
+        st.write("- Existem mais saídas futuras do que entradas previstas. O mês ainda está controlável, mas pede cautela.")
+    else:
+        st.write("- O fluxo futuro não mostra pressão relevante com os dados atuais. Continue registrando agenda e parcelas para manter a previsão confiável.")
+
+    st.caption(
+        "Observação: esta projeção não substitui o saldo real do banco. Ela depende da qualidade dos lançamentos feitos no app. "
+        "Quanto mais completa estiver a agenda e o cartão, mais útil será o diagnóstico."
+    )
 
 # ==================== ABA 1 ====================
 with aba_painel:
