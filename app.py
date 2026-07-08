@@ -138,6 +138,7 @@ dicionario_metas_alvo = {}
 dicionario_aportes_acumulados = {}
 
 lista_dividas_cadastradas = []
+lista_cartoes_cadastrados = []
 amortizacoes_totais_historicas = {}
 
 df_todos_dados = pd.DataFrame()
@@ -172,6 +173,33 @@ if supabase:
                 val_mov = float(item["valor"] or 0.0)
                 dt_item = pd.to_datetime(item["data"]).date()
                 
+                if "[CONFIG_CARTAO]" in desc:
+                    detalhes_cartao = str(item.get("satisfacao") or "")
+                    dia_fechamento = 10
+                    dia_vencimento = 20
+                    for parte in detalhes_cartao.split("|"):
+                        if ":" not in parte:
+                            continue
+                        chave_detalhe, valor_detalhe = parte.split(":", 1)
+                        chave_detalhe = chave_detalhe.strip().lower()
+                        try:
+                            valor_dia = int(float(valor_detalhe.strip()))
+                        except ValueError:
+                            continue
+                        if "fechamento" in chave_detalhe:
+                            dia_fechamento = max(1, min(valor_dia, 28))
+                        elif "vencimento" in chave_detalhe:
+                            dia_vencimento = max(1, min(valor_dia, 28))
+
+                    lista_cartoes_cadastrados.append({
+                        "id": item["id"],
+                        "nome": subcat if subcat else "Cartão sem nome",
+                        "limite": val_mov,
+                        "fechamento": dia_fechamento,
+                        "vencimento": dia_vencimento,
+                    })
+                    continue
+
                 if "[CONFIG_PERFIL]" in desc and "Renda Base Nativa" in subcat:
                     renda_base_usuario = val_mov
                     continue
@@ -426,6 +454,106 @@ saldo_projetado_7_dias = calcular_saldo_horizonte(7)
 saldo_projetado_15_dias = calcular_saldo_horizonte(15)
 saldo_projetado_30_dias = calcular_saldo_horizonte(30)
 
+
+# --- CONTROLE DE CARTÕES E FATURAS ---
+def adicionar_meses(data_ref: datetime.date, meses: int) -> datetime.date:
+    total_meses = data_ref.month - 1 + meses
+    novo_ano = data_ref.year + total_meses // 12
+    novo_mes = total_meses % 12 + 1
+    ultimo_dia_novo_mes = ultimo_dia_do_mes(datetime.date(novo_ano, novo_mes, 1)).day
+    novo_dia = min(data_ref.day, ultimo_dia_novo_mes)
+    return datetime.date(novo_ano, novo_mes, novo_dia)
+
+
+def extrair_cartao_da_descricao(descricao: str) -> str:
+    texto = str(descricao or "")
+    marcador_inicio = "[CARTAO:"
+    pos_inicio = texto.upper().find(marcador_inicio)
+    if pos_inicio == -1:
+        return "Cartão não identificado"
+    pos_nome = pos_inicio + len(marcador_inicio)
+    pos_fim = texto.find("]", pos_nome)
+    if pos_fim == -1:
+        return "Cartão não identificado"
+    nome_cartao = texto[pos_nome:pos_fim].strip()
+    return nome_cartao or "Cartão não identificado"
+
+
+def limpar_marcador_cartao(descricao: str) -> str:
+    texto = str(descricao or "")
+    marcador_inicio = "[CARTAO:"
+    pos_inicio = texto.upper().find(marcador_inicio)
+    if pos_inicio == -1:
+        return texto
+    pos_fim = texto.find("]", pos_inicio)
+    if pos_fim == -1:
+        return texto
+    return (texto[:pos_inicio] + texto[pos_fim + 1:]).strip()
+
+
+data_base_cartao = datetime.date(ano_selected, mes_selected_num, 1)
+fim_mes_cartao = ultimo_dia_do_mes(data_base_cartao)
+limite_analise_cartao = adicionar_meses(data_base_cartao, 6)
+
+df_cartao_movimentos = pd.DataFrame()
+df_cartao_mes = pd.DataFrame()
+df_cartao_futuro = pd.DataFrame()
+df_fatura_por_cartao = pd.DataFrame(columns=["Cartão", "Fatura Atual", "Limite", "% do Limite"])
+df_compromisso_futuro_cartao = pd.DataFrame(columns=["Mês", "Cartão", "Valor Comprometido"])
+valor_fatura_cartao_mes = 0.0
+valor_cartao_futuro_total = 0.0
+
+if not df_todos_dados.empty:
+    df_cartao_movimentos = df_todos_dados.copy()
+    df_cartao_movimentos["data_dt"] = pd.to_datetime(df_cartao_movimentos["data"]).dt.date
+    df_cartao_movimentos["tipo_str"] = df_cartao_movimentos["tipo"].fillna("").astype(str)
+    df_cartao_movimentos["grupo_str"] = df_cartao_movimentos["grupo_orcamentario"].fillna("").astype(str)
+    df_cartao_movimentos["descricao_str"] = df_cartao_movimentos["descricao"].fillna("").astype(str)
+
+    mascara_cartao = df_cartao_movimentos["tipo_str"].apply(eh_cartao)
+    mascara_operacional = ~df_cartao_movimentos["grupo_str"].str.upper().str.contains("CONFIG|AGENDA", na=False)
+    mascara_operacional &= ~df_cartao_movimentos["descricao_str"].str.upper().str.contains("CONFIG_PERFIL|CONFIG_CARTAO|DIVIDA_ATIVA", na=False)
+    mascara_operacional &= ~df_cartao_movimentos["grupo_str"].str.upper().str.contains("APORTE", na=False)
+    df_cartao_movimentos = df_cartao_movimentos[mascara_cartao & mascara_operacional].copy()
+
+    if not df_cartao_movimentos.empty:
+        df_cartao_movimentos["valor"] = df_cartao_movimentos["valor"].astype(float)
+        df_cartao_movimentos["Cartão"] = df_cartao_movimentos["descricao_str"].apply(extrair_cartao_da_descricao)
+        df_cartao_movimentos["Descrição Limpa"] = df_cartao_movimentos["descricao_str"].apply(limpar_marcador_cartao)
+        df_cartao_movimentos["Ano"] = pd.to_datetime(df_cartao_movimentos["data_dt"]).dt.year
+        df_cartao_movimentos["Mes"] = pd.to_datetime(df_cartao_movimentos["data_dt"]).dt.month
+        df_cartao_movimentos["Mês"] = pd.to_datetime(df_cartao_movimentos["data_dt"]).dt.strftime("%Y-%m")
+
+        df_cartao_mes = df_cartao_movimentos[
+            (df_cartao_movimentos["Ano"] == ano_selected) &
+            (df_cartao_movimentos["Mes"] == mes_selected_num)
+        ].copy()
+        valor_fatura_cartao_mes = float(df_cartao_mes["valor"].sum()) if not df_cartao_mes.empty else 0.0
+
+        df_cartao_futuro = df_cartao_movimentos[
+            (df_cartao_movimentos["data_dt"] > fim_mes_cartao) &
+            (df_cartao_movimentos["data_dt"] <= limite_analise_cartao)
+        ].copy()
+        valor_cartao_futuro_total = float(df_cartao_futuro["valor"].sum()) if not df_cartao_futuro.empty else 0.0
+
+        if not df_cartao_mes.empty:
+            df_fatura_por_cartao = df_cartao_mes.groupby("Cartão", as_index=False)["valor"].sum()
+            df_fatura_por_cartao = df_fatura_por_cartao.rename(columns={"valor": "Fatura Atual"})
+            limites_por_nome = {cartao["nome"]: float(cartao["limite"] or 0.0) for cartao in lista_cartoes_cadastrados}
+            df_fatura_por_cartao["Limite"] = df_fatura_por_cartao["Cartão"].map(limites_por_nome).fillna(0.0)
+            df_fatura_por_cartao["% do Limite"] = df_fatura_por_cartao.apply(
+                lambda row: (float(row["Fatura Atual"]) / float(row["Limite"]) * 100) if float(row["Limite"] or 0.0) > 0 else 0.0,
+                axis=1,
+            )
+
+        if not df_cartao_futuro.empty:
+            df_compromisso_futuro_cartao = df_cartao_futuro.groupby(["Mês", "Cartão"], as_index=False)["valor"].sum()
+            df_compromisso_futuro_cartao = df_compromisso_futuro_cartao.rename(columns={"valor": "Valor Comprometido"})
+
+percentual_fatura_renda_v4 = (valor_fatura_cartao_mes / renda_base_usuario) if renda_base_usuario > 0 else 0.0
+limite_total_cartoes = sum(float(cartao.get("limite") or 0.0) for cartao in lista_cartoes_cadastrados)
+percentual_fatura_limite_total = (valor_fatura_cartao_mes / limite_total_cartoes) if limite_total_cartoes > 0 else 0.0
+
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Configurações do Usuário")
 
@@ -481,9 +609,10 @@ MAPA_CATEGORIAS = {
     ]
 }
 
-aba_diagnostico, aba_fluxo_futuro, aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
+aba_diagnostico, aba_fluxo_futuro, aba_cartoes, aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
     "🧭 Diagnóstico Financeiro",
     "📅 Fluxo de Caixa Futuro",
+    "💳 Cartões & Faturas",
     "📊 Painel & Lançamentos", 
     "🐷 Meus Porquinhos & Rumo ao Milhão", 
     "📅 Agenda de Compromissos", 
@@ -718,6 +847,140 @@ with aba_fluxo_futuro:
         "Quanto mais completa estiver a agenda e o cartão, mais útil será o diagnóstico."
     )
 
+# ==================== ABA 2 (CARTÕES & FATURAS) ====================
+with aba_cartoes:
+    st.title("💳 Cartões & Faturas")
+    st.caption("Controle separado para limite, fatura atual, compras parceladas e meses futuros já comprometidos.")
+
+    col_card1, col_card2, col_card3, col_card4 = st.columns(4)
+    col_card1.metric("Fatura do mês", f"R$ {valor_fatura_cartao_mes:,.2f}")
+    col_card2.metric("Fatura / renda", f"{percentual_fatura_renda_v4 * 100:.1f}%")
+    col_card3.metric("Limite total cadastrado", f"R$ {limite_total_cartoes:,.2f}")
+    col_card4.metric("Próximos 6 meses", f"R$ {valor_cartao_futuro_total:,.2f}")
+
+    if valor_fatura_cartao_mes <= 0:
+        st.info("Nenhuma compra no cartão encontrada para o mês selecionado.")
+    elif percentual_fatura_renda_v4 >= 0.70:
+        st.error("🚨 Fatura muito pesada: ela já passa de 70% da renda base cadastrada.")
+    elif percentual_fatura_renda_v4 >= 0.50:
+        st.warning("⚠️ Fatura alta: ela já passa de 50% da renda base cadastrada.")
+    elif percentual_fatura_renda_v4 >= 0.30:
+        st.warning("🟡 Fatura em atenção: ela já passa de 30% da renda base cadastrada.")
+    else:
+        st.success("✅ Fatura aparentemente controlada em relação à renda base cadastrada.")
+
+    if not lista_cartoes_cadastrados:
+        st.info("Cadastre pelo menos um cartão para acompanhar limite, fechamento e vencimento. As compras sem cartão cadastrado continuam aparecendo como 'Cartão não identificado'.")
+
+    st.markdown("---")
+    st.subheader("➕ Cadastrar ou atualizar cartão")
+    with st.form("form_config_cartao", clear_on_submit=True):
+        col_cfg1, col_cfg2 = st.columns(2)
+        nome_cartao_cfg = col_cfg1.text_input("Nome do cartão:", placeholder="Ex: Nubank, Itaú, Inter")
+        limite_cartao_cfg = col_cfg2.number_input("Limite do cartão (R$):", min_value=0.0, step=100.0, format="%.2f")
+
+        col_cfg3, col_cfg4 = st.columns(2)
+        fechamento_cartao_cfg = col_cfg3.number_input("Dia de fechamento:", min_value=1, max_value=28, value=10, step=1)
+        vencimento_cartao_cfg = col_cfg4.number_input("Dia de vencimento:", min_value=1, max_value=28, value=20, step=1)
+
+        salvar_cartao_cfg = st.form_submit_button("Salvar cartão")
+
+    if salvar_cartao_cfg and supabase:
+        nome_cartao_limpo = nome_cartao_cfg.strip()
+        if not nome_cartao_limpo:
+            st.warning("Informe o nome do cartão.")
+        elif limite_cartao_cfg <= 0:
+            st.warning("Informe um limite maior que zero.")
+        else:
+            try:
+                supabase.table("movimentacoes").delete().eq("descricao", "[CONFIG_CARTAO]").eq("subcategoria", nome_cartao_limpo).eq("user_id", USER_ID).execute()
+                supabase.table("movimentacoes").insert({
+                    "data": str(hoje),
+                    "valor": float(limite_cartao_cfg),
+                    "tipo": "Configuração",
+                    "descricao": "[CONFIG_CARTAO]",
+                    "grupo_orcamentario": "⚙️ CONFIGURAÇÃO CARTÃO",
+                    "subcategoria": nome_cartao_limpo,
+                    "satisfacao": f"fechamento:{int(fechamento_cartao_cfg)}|vencimento:{int(vencimento_cartao_cfg)}",
+                    "user_id": USER_ID,
+                }).execute()
+                st.success("Cartão salvo com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar cartão: {e}")
+
+    st.markdown("---")
+    st.subheader("📌 Cartões cadastrados")
+    if lista_cartoes_cadastrados:
+        for cartao in lista_cartoes_cadastrados:
+            col_cad1, col_cad2, col_cad3, col_cad4, col_cad5 = st.columns([3, 2, 2, 2, 2])
+            col_cad1.write(f"**{cartao['nome']}**")
+            col_cad2.write(f"Limite: R$ {float(cartao['limite']):,.2f}")
+            col_cad3.write(f"Fecha dia {cartao['fechamento']}")
+            col_cad4.write(f"Vence dia {cartao['vencimento']}")
+            if col_cad5.button("Remover", key=f"del_card_{cartao['id']}"):
+                try:
+                    supabase.table("movimentacoes").delete().eq("id", cartao["id"]).eq("user_id", USER_ID).execute()
+                    st.success("Cartão removido.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao remover cartão: {e}")
+    else:
+        st.write("Nenhum cartão cadastrado ainda.")
+
+    st.markdown("---")
+    st.subheader(f"📊 Fatura por cartão - {lista_meses[mes_selected_num]}/{ano_selected}")
+
+    if df_fatura_por_cartao.empty:
+        st.info("Não há fatura de cartão para o período selecionado.")
+    else:
+        df_fatura_exibicao = df_fatura_por_cartao.copy()
+        df_fatura_exibicao["Fatura Atual"] = df_fatura_exibicao["Fatura Atual"].map(lambda v: f"R$ {v:,.2f}")
+        df_fatura_exibicao["Limite"] = df_fatura_exibicao["Limite"].map(lambda v: f"R$ {v:,.2f}" if v > 0 else "Não cadastrado")
+        df_fatura_exibicao["% do Limite"] = df_fatura_exibicao["% do Limite"].map(lambda v: f"{v:.1f}%" if v > 0 else "-")
+        st.dataframe(df_fatura_exibicao, use_container_width=True, hide_index=True)
+
+        fig_fatura_cartao = px.bar(df_fatura_por_cartao, x="Cartão", y="Fatura Atual", title="Fatura atual por cartão")
+        fig_fatura_cartao.update_layout(margin=dict(t=50, b=10, l=10, r=10))
+        st.plotly_chart(fig_fatura_cartao, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("🧾 Compras no cartão do mês")
+    if df_cartao_mes.empty:
+        st.info("Nenhuma compra no cartão encontrada para este mês.")
+    else:
+        df_compras_mes = df_cartao_mes[["data", "Descrição Limpa", "Cartão", "grupo_orcamentario", "subcategoria", "valor"]].copy()
+        df_compras_mes.columns = ["Data", "Descrição", "Cartão", "Grupo", "Subcategoria", "Valor"]
+        df_compras_mes = df_compras_mes.sort_values(by="Data")
+        df_compras_mes["Valor"] = df_compras_mes["Valor"].map(lambda v: f"R$ {v:,.2f}")
+        st.dataframe(df_compras_mes, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.subheader("🔮 Parcelas e compras futuras")
+    if df_compromisso_futuro_cartao.empty:
+        st.info("Nenhuma parcela futura encontrada nos próximos 6 meses a partir do mês selecionado.")
+    else:
+        df_futuro_exibicao = df_compromisso_futuro_cartao.copy()
+        df_futuro_exibicao["Valor Comprometido"] = df_futuro_exibicao["Valor Comprometido"].map(lambda v: f"R$ {v:,.2f}")
+        st.dataframe(df_futuro_exibicao, use_container_width=True, hide_index=True)
+
+        df_futuro_grafico = df_compromisso_futuro_cartao.groupby("Mês", as_index=False)["Valor Comprometido"].sum()
+        fig_futuro_cartao = px.bar(df_futuro_grafico, x="Mês", y="Valor Comprometido", title="Cartão já comprometido nos próximos meses")
+        fig_futuro_cartao.update_layout(margin=dict(t=50, b=10, l=10, r=10))
+        st.plotly_chart(fig_futuro_cartao, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("🎯 Leitura prática")
+    if percentual_fatura_renda_v4 >= 0.50:
+        st.write("- O cartão está pressionando o orçamento. Antes de parcelar algo novo, veja se o fluxo de caixa futuro continua positivo.")
+    elif valor_cartao_futuro_total > valor_fatura_cartao_mes and valor_cartao_futuro_total > 0:
+        st.write("- O risco maior está nos próximos meses, não necessariamente na fatura atual. Revise compras parceladas.")
+    elif valor_fatura_cartao_mes > 0:
+        st.write("- A fatura atual existe, mas está relativamente controlada. Continue acompanhando para não transformar cartão em renda falsa.")
+    else:
+        st.write("- Ainda não há dados suficientes de cartão para uma leitura robusta.")
+
+
 # ==================== ABA 1 ====================
 with aba_painel:
     st.title("Meu Planner Financeiro")
@@ -781,11 +1044,15 @@ with aba_painel:
 
     is_parcelado = False
     num_parcelas = 1
+    cartao_lancamento = "Cartão não identificado"
     if tipo == "💳 Saída Cartão de Crédito" and not criando_novo_porquinho:
         col_p1, col_p2 = st.columns(2)
         is_parcelado = col_p1.checkbox("Esta compra é parcelada?")
         if is_parcelado:
             num_parcelas = col_p2.number_input("Número de parcelas:", min_value=2, max_value=24, value=2, step=1)
+
+        opcoes_cartao_lancamento = ["Cartão não identificado"] + [cartao["nome"] for cartao in lista_cartoes_cadastrados]
+        cartao_lancamento = st.selectbox("Qual cartão foi usado?", opcoes_cartao_lancamento)
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
         valor = st.number_input("Qual o valor total da operação? (R$)", min_value=0.0, step=0.01, format="%.2f") if not is_parcelado else st.number_input("Qual o valor de CADA PARCELA? (R$)", min_value=0.0, step=0.01, format="%.2f")
@@ -799,6 +1066,9 @@ with aba_painel:
         final_desc = f"Meta Criada: {final_subcat}" if criando_novo_porquinho else descricao.strip()
         final_tipo = "Faturamento ou Receita (Entrada)" if criando_novo_porquinho else tipo
         valor_para_salvar = float(val_alvo_novo_fundo) if criando_novo_porquinho else float(valor)
+
+        if final_tipo == "💳 Saída Cartão de Crédito" and cartao_lancamento != "Cartão não identificado" and "[CARTAO:" not in final_desc.upper():
+            final_desc = f"[CARTAO: {cartao_lancamento}] {final_desc}"
 
         if criando_novo_porquinho and not final_subcat:
             st.warning("Informe o nome da nova meta/porquinho.")
