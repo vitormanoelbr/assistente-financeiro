@@ -2,6 +2,7 @@ import streamlit as st
 import datetime
 import calendar
 import uuid
+from typing import Optional
 import pandas as pd
 import plotly.express as px
 from supabase import create_client, Client
@@ -19,7 +20,7 @@ def adicionar_meses(data_base: datetime.date, quantidade_meses: int) -> datetime
     return datetime.date(ano, mes, dia)
 
 
-def extrair_metadado_agenda(texto: str, chave: str) -> str | None:
+def extrair_metadado_agenda(texto: str, chave: str) -> Optional[str]:
     """Lê metadados gravados no campo satisfação sem exigir nova tabela."""
     prefixo = f"{chave}:"
 
