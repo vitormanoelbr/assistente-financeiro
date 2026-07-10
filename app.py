@@ -1,10 +1,35 @@
 import streamlit as st
 import datetime
+import calendar
+import uuid
 import pandas as pd
 import plotly.express as px
 from supabase import create_client, Client
 
 st.set_page_config(page_title="Meu Planner Financeiro", layout="centered")
+
+
+def adicionar_meses(data_base: datetime.date, quantidade_meses: int) -> datetime.date:
+    """Adiciona meses preservando o dia ou usando o último dia válido do mês."""
+    indice_mes = data_base.month - 1 + quantidade_meses
+    ano = data_base.year + indice_mes // 12
+    mes = indice_mes % 12 + 1
+    ultimo_dia = calendar.monthrange(ano, mes)[1]
+    dia = min(data_base.day, ultimo_dia)
+    return datetime.date(ano, mes, dia)
+
+
+def extrair_metadado_agenda(texto: str, chave: str) -> str | None:
+    """Lê metadados gravados no campo satisfação sem exigir nova tabela."""
+    prefixo = f"{chave}:"
+
+    for parte in str(texto or "").split("|"):
+        parte_limpa = parte.strip()
+
+        if parte_limpa.startswith(prefixo):
+            return parte_limpa.split(":", 1)[1].strip()
+
+    return None
 
 # --- 🔐 CONEXÃO COM BANCO ---
 try:
@@ -1181,14 +1206,163 @@ with aba_agenda:
     st.markdown("---")
     col_agenda1, col_agenda2 = st.columns(2)
     with col_agenda1:
-        st.subheader("📌 Agendar Conta Fixa (A Pagar)")
+        st.subheader("📌 Agendar Conta (A Pagar)")
+
         with st.form("form_agenda_pagar", clear_on_submit=True):
-            name_boleto = st.text_input("Nome da Conta / Boleto:")
-            valor_boleto = st.number_input("Valor Estimado (R$):", min_value=0.0, step=0.01)
-            vencimento_boleto = st.date_input("Data de Vencimento:", datetime.date.today())
-            if st.form_submit_button("Agendar Conta Fixa") and name_boleto and valor_boleto > 0:
-                supabase.table("movimentacoes").insert({"data": str(vencimento_boleto), "valor": float(valor_boleto), "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"[AGENDA COMPROMISSO] {name_boleto}", "grupo_orcamentario": "📅 AGENDA: CONTAS A PAGAR", "subcategoria": "Conta Fixa", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
-                st.rerun()
+            name_boleto = st.text_input(
+                "Nome da Conta / Boleto:",
+                placeholder="Ex.: Internet, aluguel, financiamento"
+            )
+
+            valor_boleto = st.number_input(
+                "Valor de cada vencimento (R$):",
+                min_value=0.0,
+                step=0.01,
+                format="%.2f"
+            )
+
+            vencimento_boleto = st.date_input(
+                "Data do primeiro vencimento:",
+                datetime.date.today()
+            )
+
+            modalidade_agendamento = st.selectbox(
+                "Como essa conta deve ser agendada?",
+                [
+                    "Lançamento único",
+                    "Conta parcelada",
+                    "Conta recorrente mensal"
+                ],
+                help=(
+                    "Parcelada possui uma quantidade definida. "
+                    "Recorrente é usada para internet, aluguel, academia "
+                    "e outras contas que continuam todos os meses."
+                )
+            )
+
+            quantidade_parcelas = 1
+            meses_programados = 12
+
+            if modalidade_agendamento == "Conta parcelada":
+                quantidade_parcelas = st.number_input(
+                    "Quantidade total de parcelas:",
+                    min_value=2,
+                    max_value=120,
+                    value=2,
+                    step=1
+                )
+                st.caption(
+                    "O valor informado acima será usado em cada parcela."
+                )
+
+            elif modalidade_agendamento == "Conta recorrente mensal":
+                meses_programados = st.number_input(
+                    "Por quantos meses deseja programar?",
+                    min_value=2,
+                    max_value=60,
+                    value=12,
+                    step=1
+                )
+                st.caption(
+                    "O sistema criará os vencimentos mensais pelo período "
+                    "escolhido. Depois, a série pode ser renovada."
+                )
+
+            enviar_conta = st.form_submit_button(
+                "Agendar Conta",
+                use_container_width=True
+            )
+
+        if enviar_conta:
+            nome_limpo = name_boleto.strip()
+
+            if not nome_limpo:
+                st.warning("Informe o nome da conta.")
+            elif valor_boleto <= 0:
+                st.warning("O valor precisa ser maior que zero.")
+            else:
+                try:
+                    registros_agenda = []
+
+                    if modalidade_agendamento == "Lançamento único":
+                        registros_agenda.append({
+                            "data": str(vencimento_boleto),
+                            "valor": float(valor_boleto),
+                            "tipo": "📱 Saída Dinheiro / Pix (Débito)",
+                            "descricao": (
+                                f"[AGENDA COMPROMISSO] {nome_limpo}"
+                            ),
+                            "grupo_orcamentario": (
+                                "📅 AGENDA: CONTAS A PAGAR"
+                            ),
+                            "subcategoria": "Conta Única",
+                            "satisfacao": "3 - Indispensável",
+                            "user_id": USER_ID
+                        })
+
+                    else:
+                        serie_id = uuid.uuid4().hex[:12]
+
+                        if modalidade_agendamento == "Conta parcelada":
+                            total_ocorrencias = int(quantidade_parcelas)
+                            modalidade_meta = "PARCELADA"
+                            subcategoria_meta = "Conta Parcelada"
+                        else:
+                            total_ocorrencias = int(meses_programados)
+                            modalidade_meta = "RECORRENTE"
+                            subcategoria_meta = "Conta Recorrente"
+
+                        for indice in range(total_ocorrencias):
+                            data_ocorrencia = adicionar_meses(
+                                vencimento_boleto,
+                                indice
+                            )
+
+                            metadados = (
+                                "3 - Indispensável"
+                                f" | SERIE:{serie_id}"
+                                f" | MODALIDADE:{modalidade_meta}"
+                                f" | ORDEM:{indice + 1}/{total_ocorrencias}"
+                            )
+
+                            registros_agenda.append({
+                                "data": str(data_ocorrencia),
+                                "valor": float(valor_boleto),
+                                "tipo": (
+                                    "📱 Saída Dinheiro / Pix (Débito)"
+                                ),
+                                "descricao": (
+                                    f"[AGENDA COMPROMISSO] {nome_limpo}"
+                                ),
+                                "grupo_orcamentario": (
+                                    "📅 AGENDA: CONTAS A PAGAR"
+                                ),
+                                "subcategoria": subcategoria_meta,
+                                "satisfacao": metadados,
+                                "user_id": USER_ID
+                            })
+
+                    supabase.table("movimentacoes").insert(
+                        registros_agenda
+                    ).execute()
+
+                    if modalidade_agendamento == "Conta parcelada":
+                        st.success(
+                            f"✅ {int(quantidade_parcelas)} parcelas "
+                            "foram agendadas."
+                        )
+                    elif modalidade_agendamento == "Conta recorrente mensal":
+                        st.success(
+                            f"✅ Conta recorrente programada por "
+                            f"{int(meses_programados)} meses."
+                        )
+                    else:
+                        st.success("✅ Conta agendada.")
+
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"Erro ao agendar a conta: {e}")
                 
     with col_agenda2:
         st.subheader("💰 Agendar Valor (A Receber)")
@@ -1219,7 +1393,44 @@ with aba_agenda:
         ].copy()
 
         if not df_agenda_pura.empty:
+            df_agenda_pura["data_agenda_dt"] = pd.to_datetime(
+                df_agenda_pura["data"],
+                errors="coerce"
+            ).dt.date
+
+            modo_visualizacao_agenda = st.radio(
+                "Exibir compromissos:",
+                [
+                    "Até os próximos 90 dias",
+                    "Mês selecionado",
+                    "Todos"
+                ],
+                horizontal=True,
+                key="modo_visualizacao_agenda"
+            )
+
+            if modo_visualizacao_agenda == "Até os próximos 90 dias":
+                limite_agenda = hoje + datetime.timedelta(days=90)
+                df_agenda_pura = df_agenda_pura[
+                    df_agenda_pura["data_agenda_dt"].notna()
+                    & (df_agenda_pura["data_agenda_dt"] <= limite_agenda)
+                ]
+
+            elif modo_visualizacao_agenda == "Mês selecionado":
+                df_agenda_pura = df_agenda_pura[
+                    df_agenda_pura["data_agenda_dt"].apply(
+                        lambda data: (
+                            data is not None
+                            and data.year == ano_selected
+                            and data.month == mes_selected_num
+                        )
+                    )
+                ]
+
             df_agenda_pura = df_agenda_pura.sort_values(by="data")
+            st.caption(
+                f"{len(df_agenda_pura)} compromisso(s) exibido(s)."
+            )
 
             for _, row in df_agenda_pura.iterrows():
                 id_item = int(row["id"])
@@ -1229,6 +1440,31 @@ with aba_agenda:
                 valor_item = float(row["valor"])
                 grupo_item = str(row["grupo_orcamentario"] or "")
                 eh_conta_pagar = "PAGAR" in grupo_item.upper()
+
+                texto_metadados = str(row.get("satisfacao") or "")
+                serie_id_item = extrair_metadado_agenda(
+                    texto_metadados,
+                    "SERIE"
+                )
+                modalidade_item = extrair_metadado_agenda(
+                    texto_metadados,
+                    "MODALIDADE"
+                )
+                ordem_item = extrair_metadado_agenda(
+                    texto_metadados,
+                    "ORDEM"
+                )
+
+                identificador_repeticao = ""
+
+                if modalidade_item == "PARCELADA":
+                    identificador_repeticao = (
+                        f" · 📦 Parcela {ordem_item or ''}"
+                    )
+                elif modalidade_item == "RECORRENTE":
+                    identificador_repeticao = (
+                        f" · 🔁 Mensal {ordem_item or ''}"
+                    )
 
                 try:
                     data_item = pd.to_datetime(row["data"]).date()
@@ -1241,7 +1477,8 @@ with aba_agenda:
 
                 col_info.write(
                     f"📅 **{data_item.strftime('%Y-%m-%d')}** - "
-                    f"{desc_pura} | **R$ {valor_item:,.2f}**"
+                    f"{desc_pura}{identificador_repeticao} "
+                    f"| **R$ {valor_item:,.2f}**"
                 )
 
                 if eh_conta_pagar:
@@ -1330,6 +1567,12 @@ with aba_agenda:
                 if st.session_state["agenda_editando_id"] == id_item:
                     with st.container(border=True):
                         st.markdown(f"#### ✏️ Editando: {desc_pura}")
+
+                        if serie_id_item:
+                            st.caption(
+                                "Esta edição altera somente o vencimento "
+                                "selecionado, não toda a série."
+                            )
 
                         with st.form(f"form_editar_agenda_{id_item}"):
                             col_e1, col_e2 = st.columns([2, 1])
@@ -1448,34 +1691,82 @@ with aba_agenda:
                 if st.session_state["agenda_excluir_id"] == id_item:
                     with st.container(border=True):
                         st.warning(
-                            f"Excluir definitivamente o compromisso "
-                            f"“{desc_pura}”?"
+                            f"Excluir o compromisso “{desc_pura}”?"
                         )
+
+                        escopo_exclusao = "Somente este vencimento"
+
+                        if serie_id_item:
+                            escopo_exclusao = st.radio(
+                                "O que deseja excluir?",
+                                [
+                                    "Somente este vencimento",
+                                    "Este e os próximos vencimentos",
+                                    "Toda a série"
+                                ],
+                                key=f"escopo_delete_agenda_{id_item}"
+                            )
 
                         col_confirma, col_cancela = st.columns(2)
 
                         if col_confirma.button(
-                            "Sim, excluir",
+                            "Confirmar exclusão",
                             key=f"confirm_delete_agenda_{id_item}",
                             type="primary",
                             use_container_width=True
                         ):
                             try:
-                                supabase.table(
+                                consulta_exclusao = supabase.table(
                                     "movimentacoes"
                                 ).delete().eq(
-                                    "id", id_item
-                                ).eq(
-                                    "user_id", USER_ID
-                                ).execute()
+                                    "user_id",
+                                    USER_ID
+                                )
+
+                                if (
+                                    serie_id_item
+                                    and escopo_exclusao == "Toda a série"
+                                ):
+                                    consulta_exclusao = (
+                                        consulta_exclusao.ilike(
+                                            "satisfacao",
+                                            f"%SERIE:{serie_id_item}%"
+                                        )
+                                    )
+
+                                elif (
+                                    serie_id_item
+                                    and escopo_exclusao
+                                    == "Este e os próximos vencimentos"
+                                ):
+                                    consulta_exclusao = (
+                                        consulta_exclusao.ilike(
+                                            "satisfacao",
+                                            f"%SERIE:{serie_id_item}%"
+                                        ).gte(
+                                            "data",
+                                            str(data_item)
+                                        )
+                                    )
+
+                                else:
+                                    consulta_exclusao = (
+                                        consulta_exclusao.eq(
+                                            "id",
+                                            id_item
+                                        )
+                                    )
+
+                                consulta_exclusao.execute()
 
                                 st.session_state[
                                     "agenda_excluir_id"
                                 ] = None
                                 st.success(
-                                    "🗑️ Compromisso excluído."
+                                    "🗑️ Compromisso(s) excluído(s)."
                                 )
                                 st.rerun()
+
                             except Exception as e:
                                 st.error(
                                     "Erro ao excluir o compromisso: "
