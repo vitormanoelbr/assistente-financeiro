@@ -1202,31 +1202,300 @@ with aba_agenda:
 
     st.markdown("---")
     st.subheader("📋 Seus Compromissos Mapeados")
+
+    # Controla qual compromisso está sendo editado ou aguardando confirmação de exclusão.
+    if "agenda_editando_id" not in st.session_state:
+        st.session_state["agenda_editando_id"] = None
+
+    if "agenda_excluir_id" not in st.session_state:
+        st.session_state["agenda_excluir_id"] = None
+
     if supabase and not df_todos_dados.empty:
-        df_agenda_pura = df_todos_dados[df_todos_dados["grupo_orcamentario"].astype(str).str.upper().str.contains("AGENDA", na=False)].copy()
+        df_agenda_pura = df_todos_dados[
+            df_todos_dados["grupo_orcamentario"]
+            .astype(str)
+            .str.upper()
+            .str.contains("AGENDA", na=False)
+        ].copy()
+
         if not df_agenda_pura.empty:
             df_agenda_pura = df_agenda_pura.sort_values(by="data")
-            
-            for idx, row in df_agenda_pura.iterrows():
+
+            for _, row in df_agenda_pura.iterrows():
                 id_item = int(row["id"])
-                desc_pura = str(row["descricao"]).replace("[AGENDA COMPROMISSO] ", "")
+                desc_pura = str(row["descricao"]).replace(
+                    "[AGENDA COMPROMISSO] ", ""
+                ).strip()
                 valor_item = float(row["valor"])
-                
-                col_c1, col_c2, col_c3 = st.columns([4, 2, 2])
-                col_c1.write(f"📅 **{row['data']}** - {desc_pura} | **R$ {valor_item:,.2f}**")
-                
-                if "PAGAR" in str(row["grupo_orcamentario"]).upper():
-                    col_c2.caption("🔴 A Pagar")
-                    if col_c3.button("✅ Pagar", key=f"pay_{id_item}"):
-                        supabase.table("movimentacoes").delete().eq("id", id_item).eq("user_id", USER_ID).execute()
-                        supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "📱 Saída Dinheiro / Pix (Débito)", "descricao": f"{desc_pura} (Pago)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Contas Fixas (Luz, Água, Internet)", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
-                        st.rerun()
+                grupo_item = str(row["grupo_orcamentario"] or "")
+                eh_conta_pagar = "PAGAR" in grupo_item.upper()
+
+                try:
+                    data_item = pd.to_datetime(row["data"]).date()
+                except Exception:
+                    data_item = hoje
+
+                col_info, col_status, col_baixa, col_editar, col_excluir = st.columns(
+                    [4.8, 1.5, 1.5, 1.3, 1.3]
+                )
+
+                col_info.write(
+                    f"📅 **{data_item.strftime('%Y-%m-%d')}** - "
+                    f"{desc_pura} | **R$ {valor_item:,.2f}**"
+                )
+
+                if eh_conta_pagar:
+                    col_status.caption("🔴 A Pagar")
+
+                    if col_baixa.button(
+                        "✅ Pagar",
+                        key=f"pay_{id_item}",
+                        use_container_width=True
+                    ):
+                        try:
+                            supabase.table("movimentacoes").delete().eq(
+                                "id", id_item
+                            ).eq("user_id", USER_ID).execute()
+
+                            supabase.table("movimentacoes").insert({
+                                "data": str(hoje),
+                                "valor": valor_item,
+                                "tipo": "📱 Saída Dinheiro / Pix (Débito)",
+                                "descricao": f"{desc_pura} (Pago)",
+                                "grupo_orcamentario": (
+                                    "🔴 50% Essencial "
+                                    "(Sobrevivência e Obrigações Fixas)"
+                                ),
+                                "subcategoria": (
+                                    "Contas Fixas (Luz, Água, Internet)"
+                                ),
+                                "satisfacao": "3 - Indispensável",
+                                "user_id": USER_ID
+                            }).execute()
+
+                            st.success("✅ Compromisso marcado como pago.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao marcar como pago: {e}")
+
                 else:
-                    col_c2.caption("🟢 A Receber")
-                    if col_c3.button("💰 Receber", key=f"rec_{id_item}"):
-                        supabase.table("movimentacoes").delete().eq("id", id_item).eq("user_id", USER_ID).execute()
-                        supabase.table("movimentacoes").insert({"data": str(hoje), "valor": valor_item, "tipo": "Faturamento ou Receita (Entrada)", "descricao": f"{desc_pura} (Recebido)", "grupo_orcamentario": "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)", "subcategoria": "Renda Base Nativa", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
-                        st.rerun()
+                    col_status.caption("🟢 A Receber")
+
+                    if col_baixa.button(
+                        "💰 Receber",
+                        key=f"rec_{id_item}",
+                        use_container_width=True
+                    ):
+                        try:
+                            supabase.table("movimentacoes").delete().eq(
+                                "id", id_item
+                            ).eq("user_id", USER_ID).execute()
+
+                            supabase.table("movimentacoes").insert({
+                                "data": str(hoje),
+                                "valor": valor_item,
+                                "tipo": "Faturamento ou Receita (Entrada)",
+                                "descricao": f"{desc_pura} (Recebido)",
+                                "grupo_orcamentario": (
+                                    "🔴 50% Essencial "
+                                    "(Sobrevivência e Obrigações Fixas)"
+                                ),
+                                "subcategoria": "Renda Extra / Recebimento",
+                                "satisfacao": "3 - Indispensável",
+                                "user_id": USER_ID
+                            }).execute()
+
+                            st.success("✅ Compromisso marcado como recebido.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao marcar como recebido: {e}")
+
+                if col_editar.button(
+                    "✏️ Editar",
+                    key=f"edit_agenda_{id_item}",
+                    use_container_width=True
+                ):
+                    st.session_state["agenda_editando_id"] = id_item
+                    st.session_state["agenda_excluir_id"] = None
+
+                if col_excluir.button(
+                    "🗑️ Excluir",
+                    key=f"delete_agenda_{id_item}",
+                    use_container_width=True
+                ):
+                    st.session_state["agenda_excluir_id"] = id_item
+                    st.session_state["agenda_editando_id"] = None
+
+                # Formulário de edição aberto apenas para o item escolhido.
+                if st.session_state["agenda_editando_id"] == id_item:
+                    with st.container(border=True):
+                        st.markdown(f"#### ✏️ Editando: {desc_pura}")
+
+                        with st.form(f"form_editar_agenda_{id_item}"):
+                            col_e1, col_e2 = st.columns([2, 1])
+
+                            nova_descricao = col_e1.text_input(
+                                "Nome do compromisso:",
+                                value=desc_pura
+                            )
+
+                            novo_valor = col_e2.number_input(
+                                "Valor (R$):",
+                                min_value=0.01,
+                                value=valor_item,
+                                step=0.01,
+                                format="%.2f"
+                            )
+
+                            col_e3, col_e4 = st.columns(2)
+
+                            nova_data = col_e3.date_input(
+                                "Data:",
+                                value=data_item
+                            )
+
+                            opcoes_status = ["A Pagar", "A Receber"]
+                            status_atual = (
+                                "A Pagar" if eh_conta_pagar else "A Receber"
+                            )
+
+                            novo_status = col_e4.selectbox(
+                                "Tipo do compromisso:",
+                                opcoes_status,
+                                index=opcoes_status.index(status_atual)
+                            )
+
+                            col_salvar, col_cancelar = st.columns(2)
+
+                            salvar_edicao = col_salvar.form_submit_button(
+                                "💾 Salvar alterações",
+                                use_container_width=True
+                            )
+
+                            cancelar_edicao = col_cancelar.form_submit_button(
+                                "Cancelar",
+                                use_container_width=True
+                            )
+
+                        if salvar_edicao:
+                            descricao_limpa = nova_descricao.strip()
+
+                            if not descricao_limpa:
+                                st.warning(
+                                    "Informe um nome para o compromisso."
+                                )
+                            elif novo_valor <= 0:
+                                st.warning(
+                                    "O valor precisa ser maior que zero."
+                                )
+                            else:
+                                if novo_status == "A Pagar":
+                                    novo_grupo = (
+                                        "📅 AGENDA: CONTAS A PAGAR"
+                                    )
+                                    novo_tipo = (
+                                        "📱 Saída Dinheiro / Pix (Débito)"
+                                    )
+                                    nova_subcategoria = "Conta Fixa"
+                                else:
+                                    novo_grupo = (
+                                        "📅 AGENDA: CONTAS A RECEBER"
+                                    )
+                                    novo_tipo = (
+                                        "Faturamento ou Receita (Entrada)"
+                                    )
+                                    nova_subcategoria = (
+                                        "Valores a Receber"
+                                    )
+
+                                try:
+                                    supabase.table(
+                                        "movimentacoes"
+                                    ).update({
+                                        "data": str(nova_data),
+                                        "valor": float(novo_valor),
+                                        "tipo": novo_tipo,
+                                        "descricao": (
+                                            "[AGENDA COMPROMISSO] "
+                                            f"{descricao_limpa}"
+                                        ),
+                                        "grupo_orcamentario": novo_grupo,
+                                        "subcategoria": nova_subcategoria
+                                    }).eq(
+                                        "id", id_item
+                                    ).eq(
+                                        "user_id", USER_ID
+                                    ).execute()
+
+                                    st.session_state[
+                                        "agenda_editando_id"
+                                    ] = None
+                                    st.success(
+                                        "✅ Compromisso atualizado."
+                                    )
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(
+                                        "Erro ao atualizar o compromisso: "
+                                        f"{e}"
+                                    )
+
+                        if cancelar_edicao:
+                            st.session_state["agenda_editando_id"] = None
+                            st.rerun()
+
+                # Confirmação explícita antes da exclusão definitiva.
+                if st.session_state["agenda_excluir_id"] == id_item:
+                    with st.container(border=True):
+                        st.warning(
+                            f"Excluir definitivamente o compromisso "
+                            f"“{desc_pura}”?"
+                        )
+
+                        col_confirma, col_cancela = st.columns(2)
+
+                        if col_confirma.button(
+                            "Sim, excluir",
+                            key=f"confirm_delete_agenda_{id_item}",
+                            type="primary",
+                            use_container_width=True
+                        ):
+                            try:
+                                supabase.table(
+                                    "movimentacoes"
+                                ).delete().eq(
+                                    "id", id_item
+                                ).eq(
+                                    "user_id", USER_ID
+                                ).execute()
+
+                                st.session_state[
+                                    "agenda_excluir_id"
+                                ] = None
+                                st.success(
+                                    "🗑️ Compromisso excluído."
+                                )
+                                st.rerun()
+                            except Exception as e:
+                                st.error(
+                                    "Erro ao excluir o compromisso: "
+                                    f"{e}"
+                                )
+
+                        if col_cancela.button(
+                            "Não, cancelar",
+                            key=f"cancel_delete_agenda_{id_item}",
+                            use_container_width=True
+                        ):
+                            st.session_state["agenda_excluir_id"] = None
+                            st.rerun()
+
+                st.markdown("---")
+        else:
+            st.info("Nenhum compromisso agendado.")
+    else:
+        st.info("Nenhum compromisso agendado.")
+
 
 # ==================== ABA 4 (GESTÃO DE DÍVIDAS) ====================
 with aba_dividas:
