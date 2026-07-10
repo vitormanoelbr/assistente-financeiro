@@ -32,6 +32,64 @@ def extrair_metadado_agenda(texto: str, chave: str) -> Optional[str]:
 
     return None
 
+
+def inserir_agendamentos_com_seguranca(
+    cliente_supabase,
+    registros,
+    user_id: str,
+    serie_id: Optional[str] = None
+) -> int:
+    """Insere cada compromisso separadamente e desfaz a série se algo falhar."""
+    ids_inseridos = []
+
+    try:
+        for registro in registros:
+            resposta = (
+                cliente_supabase
+                .table("movimentacoes")
+                .insert(registro)
+                .execute()
+            )
+
+            dados_resposta = getattr(resposta, "data", None) or []
+
+            for item in dados_resposta:
+                if isinstance(item, dict) and item.get("id") is not None:
+                    ids_inseridos.append(item["id"])
+
+        return len(registros)
+
+    except Exception:
+        # Primeiro tenta remover pelos IDs devolvidos pela API.
+        for id_inserido in ids_inseridos:
+            try:
+                (
+                    cliente_supabase
+                    .table("movimentacoes")
+                    .delete()
+                    .eq("id", id_inserido)
+                    .eq("user_id", user_id)
+                    .execute()
+                )
+            except Exception:
+                pass
+
+        # Fallback para respostas sem representação dos registros inseridos.
+        if serie_id:
+            try:
+                (
+                    cliente_supabase
+                    .table("movimentacoes")
+                    .delete()
+                    .eq("user_id", user_id)
+                    .ilike("satisfacao", f"%S:{serie_id}%")
+                    .execute()
+                )
+            except Exception:
+                pass
+
+        raise
+
 # --- 🔐 CONEXÃO COM BANCO ---
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
@@ -1198,6 +1256,10 @@ with aba_porquinhos:
 # ==================== ABA 3 (AGENDA) ====================
 with aba_agenda:
     st.title("📅 Agenda de Compromissos Financeiros")
+
+    feedback_agenda = st.session_state.pop("feedback_agenda", None)
+    if feedback_agenda:
+        st.success(feedback_agenda)
     
     st.markdown("### 📊 Fluxo de Caixa Projetado da Agenda")
     col_ag1, col_ag2 = st.columns(2)
@@ -1209,7 +1271,23 @@ with aba_agenda:
     with col_agenda1:
         st.subheader("📌 Agendar Conta (A Pagar)")
 
-        with st.form("form_agenda_pagar", clear_on_submit=True):
+        # Fica fora do formulário para o Streamlit atualizar os campos
+        # imediatamente ao trocar a modalidade.
+        modalidade_agendamento = st.selectbox(
+            "Tipo de agendamento:",
+            [
+                "Lançamento único",
+                "Conta parcelada",
+                "Conta recorrente mensal"
+            ],
+            key="modalidade_agendamento_conta",
+            help=(
+                "Conta parcelada possui quantidade definida. Conta recorrente "
+                "é usada para internet, aluguel, academia e outras mensalidades."
+            )
+        )
+
+        with st.form("form_agenda_pagar_estavel", clear_on_submit=True):
             name_boleto = st.text_input(
                 "Nome da Conta / Boleto:",
                 placeholder="Ex.: Internet, aluguel, financiamento"
@@ -1227,46 +1305,32 @@ with aba_agenda:
                 datetime.date.today()
             )
 
-            modalidade_agendamento = st.selectbox(
-                "Como essa conta deve ser agendada?",
-                [
-                    "Lançamento único",
-                    "Conta parcelada",
-                    "Conta recorrente mensal"
-                ],
-                help=(
-                    "Parcelada possui uma quantidade definida. "
-                    "Recorrente é usada para internet, aluguel, academia "
-                    "e outras contas que continuam todos os meses."
-                )
-            )
-
             quantidade_parcelas = 1
-            meses_programados = 12
+            meses_programados = 1
 
             if modalidade_agendamento == "Conta parcelada":
                 quantidade_parcelas = st.number_input(
                     "Quantidade total de parcelas:",
                     min_value=2,
-                    max_value=120,
+                    max_value=60,
                     value=2,
                     step=1
                 )
                 st.caption(
-                    "O valor informado acima será usado em cada parcela."
+                    "Informe o valor de cada parcela, e não o valor total."
                 )
 
             elif modalidade_agendamento == "Conta recorrente mensal":
                 meses_programados = st.number_input(
                     "Por quantos meses deseja programar?",
                     min_value=2,
-                    max_value=60,
+                    max_value=36,
                     value=12,
                     step=1
                 )
                 st.caption(
-                    "O sistema criará os vencimentos mensais pelo período "
-                    "escolhido. Depois, a série pode ser renovada."
+                    "Para contas sem data final, programe 12 meses e renove "
+                    "depois. Isso evita registros infinitos no banco."
                 )
 
             enviar_conta = st.form_submit_button(
@@ -1275,19 +1339,55 @@ with aba_agenda:
             )
 
         if enviar_conta:
-            nome_limpo = name_boleto.strip()
+            nome_limpo = str(name_boleto or "").strip()
 
             if not nome_limpo:
                 st.warning("Informe o nome da conta.")
-            elif valor_boleto <= 0:
+            elif float(valor_boleto or 0) <= 0:
                 st.warning("O valor precisa ser maior que zero.")
             else:
-                try:
-                    registros_agenda = []
+                registros_agenda = []
+                serie_id = None
 
-                    if modalidade_agendamento == "Lançamento único":
+                if modalidade_agendamento == "Lançamento único":
+                    registros_agenda.append({
+                        "data": str(vencimento_boleto),
+                        "valor": float(valor_boleto),
+                        "tipo": "📱 Saída Dinheiro / Pix (Débito)",
+                        "descricao": f"[AGENDA COMPROMISSO] {nome_limpo}",
+                        "grupo_orcamentario": "📅 AGENDA: CONTAS A PAGAR",
+                        "subcategoria": "Conta Única",
+                        "satisfacao": "3 - Indispensável",
+                        "user_id": USER_ID
+                    })
+
+                else:
+                    serie_id = uuid.uuid4().hex[:10]
+
+                    if modalidade_agendamento == "Conta parcelada":
+                        total_ocorrencias = int(quantidade_parcelas)
+                        modalidade_curta = "P"
+                        subcategoria_meta = "Conta Parcelada"
+                    else:
+                        total_ocorrencias = int(meses_programados)
+                        modalidade_curta = "R"
+                        subcategoria_meta = "Conta Recorrente"
+
+                    for indice in range(total_ocorrencias):
+                        data_ocorrencia = adicionar_meses(
+                            vencimento_boleto,
+                            indice
+                        )
+
+                        # Metadado compacto:
+                        # S = série, M = modalidade, O = ordem.
+                        metadados = (
+                            f"3|S:{serie_id}|M:{modalidade_curta}"
+                            f"|O:{indice + 1}/{total_ocorrencias}"
+                        )
+
                         registros_agenda.append({
-                            "data": str(vencimento_boleto),
+                            "data": str(data_ocorrencia),
                             "valor": float(valor_boleto),
                             "tipo": "📱 Saída Dinheiro / Pix (Débito)",
                             "descricao": (
@@ -1296,75 +1396,47 @@ with aba_agenda:
                             "grupo_orcamentario": (
                                 "📅 AGENDA: CONTAS A PAGAR"
                             ),
-                            "subcategoria": "Conta Única",
-                            "satisfacao": "3 - Indispensável",
+                            "subcategoria": subcategoria_meta,
+                            "satisfacao": metadados,
                             "user_id": USER_ID
                         })
 
-                    else:
-                        serie_id = uuid.uuid4().hex[:12]
+                salvou_agenda = False
 
-                        if modalidade_agendamento == "Conta parcelada":
-                            total_ocorrencias = int(quantidade_parcelas)
-                            modalidade_meta = "PARCELADA"
-                            subcategoria_meta = "Conta Parcelada"
-                        else:
-                            total_ocorrencias = int(meses_programados)
-                            modalidade_meta = "RECORRENTE"
-                            subcategoria_meta = "Conta Recorrente"
-
-                        for indice in range(total_ocorrencias):
-                            data_ocorrencia = adicionar_meses(
-                                vencimento_boleto,
-                                indice
-                            )
-
-                            metadados = (
-                                "3 - Indispensável"
-                                f" | SERIE:{serie_id}"
-                                f" | MODALIDADE:{modalidade_meta}"
-                                f" | ORDEM:{indice + 1}/{total_ocorrencias}"
-                            )
-
-                            registros_agenda.append({
-                                "data": str(data_ocorrencia),
-                                "valor": float(valor_boleto),
-                                "tipo": (
-                                    "📱 Saída Dinheiro / Pix (Débito)"
-                                ),
-                                "descricao": (
-                                    f"[AGENDA COMPROMISSO] {nome_limpo}"
-                                ),
-                                "grupo_orcamentario": (
-                                    "📅 AGENDA: CONTAS A PAGAR"
-                                ),
-                                "subcategoria": subcategoria_meta,
-                                "satisfacao": metadados,
-                                "user_id": USER_ID
-                            })
-
-                    supabase.table("movimentacoes").insert(
-                        registros_agenda
-                    ).execute()
+                try:
+                    quantidade_salva = inserir_agendamentos_com_seguranca(
+                        supabase,
+                        registros_agenda,
+                        USER_ID,
+                        serie_id
+                    )
 
                     if modalidade_agendamento == "Conta parcelada":
-                        st.success(
-                            f"✅ {int(quantidade_parcelas)} parcelas "
-                            "foram agendadas."
+                        mensagem = (
+                            f"✅ {quantidade_salva} parcelas foram agendadas."
                         )
                     elif modalidade_agendamento == "Conta recorrente mensal":
-                        st.success(
+                        mensagem = (
                             f"✅ Conta recorrente programada por "
-                            f"{int(meses_programados)} meses."
+                            f"{quantidade_salva} meses."
                         )
                     else:
-                        st.success("✅ Conta agendada.")
+                        mensagem = "✅ Conta agendada."
 
-                    st.rerun()
+                    st.session_state["feedback_agenda"] = mensagem
+                    salvou_agenda = True
 
                 except Exception as e:
-                    st.error(f"Erro ao agendar a conta: {e}")
-                
+                    st.error(
+                        "Não foi possível salvar a conta. O sistema tentou "
+                        "desfazer qualquer parcela criada parcialmente."
+                    )
+                    st.exception(e)
+
+                # Fora do try: evita que o rerun seja tratado como erro.
+                if salvou_agenda:
+                    st.rerun()
+
     with col_agenda2:
         st.subheader("💰 Agendar Valor (A Receber)")
         with st.form("form_agenda_receber", clear_on_submit=True):
@@ -1414,6 +1486,7 @@ with aba_agenda:
                 limite_agenda = hoje + datetime.timedelta(days=90)
                 df_agenda_pura = df_agenda_pura[
                     df_agenda_pura["data_agenda_dt"].notna()
+                    & (df_agenda_pura["data_agenda_dt"] >= hoje)
                     & (df_agenda_pura["data_agenda_dt"] <= limite_agenda)
                 ]
 
@@ -1443,18 +1516,28 @@ with aba_agenda:
                 eh_conta_pagar = "PAGAR" in grupo_item.upper()
 
                 texto_metadados = str(row.get("satisfacao") or "")
-                serie_id_item = extrair_metadado_agenda(
-                    texto_metadados,
-                    "SERIE"
+                serie_id_item = (
+                    extrair_metadado_agenda(texto_metadados, "SERIE")
+                    or extrair_metadado_agenda(texto_metadados, "S")
                 )
-                modalidade_item = extrair_metadado_agenda(
-                    texto_metadados,
-                    "MODALIDADE"
+
+                modalidade_item = (
+                    extrair_metadado_agenda(
+                        texto_metadados,
+                        "MODALIDADE"
+                    )
+                    or extrair_metadado_agenda(texto_metadados, "M")
                 )
-                ordem_item = extrair_metadado_agenda(
-                    texto_metadados,
-                    "ORDEM"
+
+                ordem_item = (
+                    extrair_metadado_agenda(texto_metadados, "ORDEM")
+                    or extrair_metadado_agenda(texto_metadados, "O")
                 )
+
+                if modalidade_item == "P":
+                    modalidade_item = "PARCELADA"
+                elif modalidade_item == "R":
+                    modalidade_item = "RECORRENTE"
 
                 identificador_repeticao = ""
 
@@ -1731,7 +1814,11 @@ with aba_agenda:
                                     consulta_exclusao = (
                                         consulta_exclusao.ilike(
                                             "satisfacao",
-                                            f"%SERIE:{serie_id_item}%"
+                                            (
+                                                f"%SERIE:{serie_id_item}%"
+                                                if "SERIE:" in texto_metadados
+                                                else f"%S:{serie_id_item}%"
+                                            )
                                         )
                                     )
 
@@ -1743,7 +1830,11 @@ with aba_agenda:
                                     consulta_exclusao = (
                                         consulta_exclusao.ilike(
                                             "satisfacao",
-                                            f"%SERIE:{serie_id_item}%"
+                                            (
+                                                f"%SERIE:{serie_id_item}%"
+                                                if "SERIE:" in texto_metadados
+                                                else f"%S:{serie_id_item}%"
+                                            )
                                         ).gte(
                                             "data",
                                             str(data_item)
