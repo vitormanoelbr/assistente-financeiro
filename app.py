@@ -300,8 +300,20 @@ if supabase:
         if resposta_completa and hasattr(resposta_completa, 'data') and resposta_completa.data:
             res_data = resposta_completa.data
             df_todos_dados = pd.DataFrame(res_data)
-            df_todos_dados["valor"] = df_todos_dados["valor"].astype(float)
-            df_todos_dados["data_dt"] = pd.to_datetime(df_todos_dados["data"]).dt.date
+
+            df_todos_dados["valor"] = pd.to_numeric(
+                df_todos_dados["valor"],
+                errors="coerce"
+            ).fillna(0.0)
+
+            df_todos_dados["data_ts"] = pd.to_datetime(
+                df_todos_dados["data"],
+                errors="coerce"
+            )
+
+            df_todos_dados["data_dt"] = (
+                df_todos_dados["data_ts"].dt.date
+            )
             
             # Processamento de Configurações Globais e Metadados
             for item in res_data:
@@ -309,8 +321,25 @@ if supabase:
                 subcat = str(item.get("subcategoria") or "")
                 grupo = str(item.get("grupo_orcamentario") or "")
                 tipo_mov = str(item.get("tipo") or "")
-                val_mov = float(item["valor"] or 0.0)
-                dt_item = pd.to_datetime(item["data"]).date()
+                val_mov_convertido = pd.to_numeric(
+                    item.get("valor"),
+                    errors="coerce"
+                )
+                val_mov = (
+                    0.0
+                    if pd.isna(val_mov_convertido)
+                    else float(val_mov_convertido)
+                )
+
+                dt_item_convertido = pd.to_datetime(
+                    item.get("data"),
+                    errors="coerce"
+                )
+                dt_item = (
+                    None
+                    if pd.isna(dt_item_convertido)
+                    else dt_item_convertido.date()
+                )
                 
                 if "[CONFIG_CARTAO]" in desc:
                     detalhes_cartao = str(item.get("satisfacao") or "")
@@ -353,7 +382,11 @@ if supabase:
                     continue
                 
                 if "AGENDA" in grupo.upper():
-                    if dt_item.year == ano_selected and dt_item.month == mes_selected_num:
+                    if (
+                        dt_item is not None
+                        and dt_item.year == int(ano_selected)
+                        and dt_item.month == int(mes_selected_num)
+                    ):
                         if "PAGAR" in grupo.upper():
                             agenda_a_pagar_mes += val_mov
                         elif "RECEBER" in grupo.upper():
@@ -938,6 +971,62 @@ def resolver_categoria_destino_agenda(
         return None, None
 
     return grupo_destino, categoria_destino
+
+
+
+def valor_ausente_seguro(valor) -> bool:
+    """Detecta None, NaN, NaT e pd.NA sem provocar booleano ambíguo."""
+    if valor is None:
+        return True
+
+    try:
+        resultado = pd.isna(valor)
+
+        if isinstance(resultado, bool):
+            return resultado
+    except (TypeError, ValueError):
+        pass
+
+    return False
+
+
+def texto_seguro_registro(valor, padrao: str = "") -> str:
+    """Converte uma célula em texto sem quebrar com valores ausentes."""
+    if valor_ausente_seguro(valor):
+        return padrao
+
+    return str(valor).strip()
+
+
+def numero_seguro_registro(valor, padrao=None):
+    """Converte uma célula em número ou devolve o padrão."""
+    convertido = pd.to_numeric(valor, errors="coerce")
+
+    if pd.isna(convertido):
+        return padrao
+
+    return float(convertido)
+
+
+def id_seguro_registro(valor):
+    """Normaliza IDs numéricos ou textuais sem assumir que sempre são inteiros."""
+    if valor_ausente_seguro(valor):
+        raise ValueError("Compromisso sem identificador.")
+
+    try:
+        numero = float(valor)
+
+        if numero.is_integer():
+            return int(numero)
+    except (TypeError, ValueError):
+        pass
+
+    texto = str(valor).strip()
+
+    if not texto:
+        raise ValueError("Compromisso sem identificador.")
+
+    return texto
 
 
 aba_diagnostico, aba_fluxo_futuro, aba_cartoes, aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
@@ -2777,10 +2866,14 @@ with aba_agenda:
         ].copy()
 
         if not df_agenda_pura.empty:
-            df_agenda_pura["data_agenda_dt"] = pd.to_datetime(
+            df_agenda_pura["data_agenda_ts"] = pd.to_datetime(
                 df_agenda_pura["data"],
                 errors="coerce"
-            ).dt.date
+            )
+
+            quantidade_datas_invalidas = int(
+                df_agenda_pura["data_agenda_ts"].isna().sum()
+            )
 
             modo_visualizacao_agenda = st.radio(
                 "Exibir compromissos:",
@@ -2794,639 +2887,727 @@ with aba_agenda:
             )
 
             if modo_visualizacao_agenda == "Até os próximos 90 dias":
-                limite_agenda = hoje + datetime.timedelta(days=90)
-                df_agenda_pura = df_agenda_pura[
-                    df_agenda_pura["data_agenda_dt"].notna()
-                    & (df_agenda_pura["data_agenda_dt"] >= hoje)
-                    & (df_agenda_pura["data_agenda_dt"] <= limite_agenda)
-                ]
+                inicio_agenda = pd.Timestamp(hoje)
+                limite_agenda = pd.Timestamp(
+                    hoje + datetime.timedelta(days=90)
+                )
+
+                mascara_periodo_agenda = (
+                    df_agenda_pura["data_agenda_ts"].notna()
+                    & (
+                        df_agenda_pura["data_agenda_ts"]
+                        >= inicio_agenda
+                    )
+                    & (
+                        df_agenda_pura["data_agenda_ts"]
+                        <= limite_agenda
+                    )
+                )
+
+                df_agenda_pura = df_agenda_pura.loc[
+                    mascara_periodo_agenda
+                ].copy()
 
             elif modo_visualizacao_agenda == "Mês selecionado":
-                df_agenda_pura = df_agenda_pura[
-                    df_agenda_pura["data_agenda_dt"].apply(
-                        lambda data: (
-                            data is not None
-                            and data.year == ano_selected
-                            and data.month == mes_selected_num
-                        )
+                mascara_mes_agenda = (
+                    df_agenda_pura["data_agenda_ts"].notna()
+                    & (
+                        df_agenda_pura["data_agenda_ts"].dt.year
+                        == int(ano_selected)
                     )
-                ]
+                    & (
+                        df_agenda_pura["data_agenda_ts"].dt.month
+                        == int(mes_selected_num)
+                    )
+                )
 
-            df_agenda_pura = df_agenda_pura.sort_values(by="data")
+                df_agenda_pura = df_agenda_pura.loc[
+                    mascara_mes_agenda
+                ].copy()
+
+            else:
+                # Registros com data inválida não podem ser operados com
+                # segurança e ficam fora da listagem, mas o usuário é avisado.
+                df_agenda_pura = df_agenda_pura.loc[
+                    df_agenda_pura["data_agenda_ts"].notna()
+                ].copy()
+
+            df_agenda_pura = df_agenda_pura.sort_values(
+                by="data_agenda_ts"
+            )
+
+            if quantidade_datas_invalidas > 0:
+                st.warning(
+                    f"{quantidade_datas_invalidas} compromisso(s) com data "
+                    "inválida foram ignorados para evitar falha no painel."
+                )
+
             st.caption(
                 f"{len(df_agenda_pura)} compromisso(s) exibido(s)."
             )
 
+            if df_agenda_pura.empty:
+                st.info(
+                    "Nenhum compromisso encontrado para o período "
+                    "selecionado."
+                )
+
             for _, row in df_agenda_pura.iterrows():
-                id_item = int(row["id"])
-                desc_pura = str(row["descricao"]).replace(
-                    "[AGENDA COMPROMISSO] ", ""
-                ).strip()
-                valor_item = float(row["valor"])
-                grupo_item = str(row["grupo_orcamentario"] or "")
-                eh_conta_pagar = "PAGAR" in grupo_item.upper()
-
-                texto_metadados = str(row.get("satisfacao") or "")
-                serie_id_item = (
-                    extrair_metadado_agenda(texto_metadados, "SERIE")
-                    or extrair_metadado_agenda(texto_metadados, "S")
-                )
-
-                modalidade_item = (
-                    extrair_metadado_agenda(
-                        texto_metadados,
-                        "MODALIDADE"
-                    )
-                    or extrair_metadado_agenda(texto_metadados, "M")
-                )
-
-                ordem_item = (
-                    extrair_metadado_agenda(texto_metadados, "ORDEM")
-                    or extrair_metadado_agenda(texto_metadados, "O")
-                )
-
-                grupo_destino_item, categoria_destino_item = (
-                    resolver_categoria_destino_agenda(
-                        texto_metadados,
-                        row.get("subcategoria")
-                    )
-                )
-
-                if modalidade_item == "P":
-                    modalidade_item = "PARCELADA"
-                elif modalidade_item == "R":
-                    modalidade_item = "RECORRENTE"
-
-                identificador_repeticao = ""
-
-                if modalidade_item == "PARCELADA":
-                    identificador_repeticao = (
-                        f" · 📦 Parcela {ordem_item or ''}"
-                    )
-                elif modalidade_item == "RECORRENTE":
-                    identificador_repeticao = (
-                        f" · 🔁 Mensal {ordem_item or ''}"
-                    )
-
                 try:
-                    data_item = pd.to_datetime(row["data"]).date()
-                except Exception:
-                    data_item = hoje
+                    id_item = id_seguro_registro(
+                        row.get("id")
+                    )
 
-                col_info, col_status, col_baixa, col_editar, col_excluir = st.columns(
-                    [4.8, 1.5, 1.5, 1.3, 1.3]
-                )
+                    desc_pura = texto_seguro_registro(
+                        row.get("descricao")
+                    ).replace(
+                        "[AGENDA COMPROMISSO] ",
+                        ""
+                    ).strip()
 
-                col_info.write(
-                    f"📅 **{data_item.strftime('%Y-%m-%d')}** - "
-                    f"{desc_pura}{identificador_repeticao} "
-                    f"| **R$ {valor_item:,.2f}**"
-                )
+                    valor_item = numero_seguro_registro(
+                        row.get("valor")
+                    )
 
-                if eh_conta_pagar:
-                    if grupo_destino_item and categoria_destino_item:
-                        col_info.caption(
-                            f"Categoria: {grupo_destino_item} > "
-                            f"{categoria_destino_item}"
-                        )
-                    else:
-                        col_info.caption(
-                            "⚠️ Categoria não definida. Use Editar antes "
-                            "de marcar como pago."
+                    if valor_item is None:
+                        raise ValueError(
+                            f"Compromisso {id_item} com valor inválido."
                         )
 
-                if eh_conta_pagar:
-                    col_status.caption("🔴 A Pagar")
+                    grupo_item = texto_seguro_registro(
+                        row.get("grupo_orcamentario")
+                    )
+                    eh_conta_pagar = "PAGAR" in grupo_item.upper()
 
-                    if col_baixa.button(
-                        "✅ Pagar",
-                        key=f"pay_{id_item}",
-                        use_container_width=True
+                    texto_metadados = texto_seguro_registro(
+                        row.get("satisfacao")
+                    )
+                    serie_id_item = (
+                        extrair_metadado_agenda(texto_metadados, "SERIE")
+                        or extrair_metadado_agenda(texto_metadados, "S")
+                    )
+
+                    modalidade_item = (
+                        extrair_metadado_agenda(
+                            texto_metadados,
+                            "MODALIDADE"
+                        )
+                        or extrair_metadado_agenda(texto_metadados, "M")
+                    )
+
+                    ordem_item = (
+                        extrair_metadado_agenda(texto_metadados, "ORDEM")
+                        or extrair_metadado_agenda(texto_metadados, "O")
+                    )
+
+                    grupo_destino_item, categoria_destino_item = (
+                        resolver_categoria_destino_agenda(
+                            texto_metadados,
+                            row.get("subcategoria")
+                        )
+                    )
+
+                    if modalidade_item == "P":
+                        modalidade_item = "PARCELADA"
+                    elif modalidade_item == "R":
+                        modalidade_item = "RECORRENTE"
+
+                    identificador_repeticao = ""
+
+                    if modalidade_item == "PARCELADA":
+                        identificador_repeticao = (
+                            f" · 📦 Parcela {ordem_item or ''}"
+                        )
+                    elif modalidade_item == "RECORRENTE":
+                        identificador_repeticao = (
+                            f" · 🔁 Mensal {ordem_item or ''}"
+                        )
+
+                    data_item_ts = row.get(
+                        "data_agenda_ts"
+                    )
+
+                    if (
+                        data_item_ts is None
+                        or pd.isna(data_item_ts)
                     ):
-                        if not (
-                            grupo_destino_item
-                            and categoria_destino_item
-                        ):
-                            st.warning(
-                                "Defina o grupo e a subcategoria deste "
-                                "compromisso em Editar antes de pagar."
+                        raise ValueError(
+                            f"Compromisso {id_item} com data inválida."
+                        )
+
+                    data_item = data_item_ts.date()
+
+                    col_info, col_status, col_baixa, col_editar, col_excluir = st.columns(
+                        [4.8, 1.5, 1.5, 1.3, 1.3]
+                    )
+
+                    col_info.write(
+                        f"📅 **{data_item.strftime('%Y-%m-%d')}** - "
+                        f"{desc_pura}{identificador_repeticao} "
+                        f"| **R$ {valor_item:,.2f}**"
+                    )
+
+                    if eh_conta_pagar:
+                        if grupo_destino_item and categoria_destino_item:
+                            col_info.caption(
+                                f"Categoria: {grupo_destino_item} > "
+                                f"{categoria_destino_item}"
                             )
                         else:
-                            try:
-                                resposta_baixa = (
-                                    supabase
-                                    .table("movimentacoes")
-                                    .insert({
-                                        "data": str(hoje),
-                                        "valor": valor_item,
-                                        "tipo": (
-                                            "📱 Saída Dinheiro / Pix "
-                                            "(Débito)"
-                                        ),
-                                        "descricao": (
-                                            f"{desc_pura} (Pago)"
-                                        ),
-                                        "grupo_orcamentario": (
-                                            grupo_destino_item
-                                        ),
-                                        "subcategoria": (
-                                            categoria_destino_item
-                                        ),
-                                        "satisfacao": (
-                                            "3 - Indispensável"
-                                        ),
-                                        "user_id": USER_ID
-                                    })
-                                    .execute()
-                                )
-
-                                dados_baixa = (
-                                    getattr(
-                                        resposta_baixa,
-                                        "data",
-                                        None
-                                    )
-                                    or []
-                                )
-
-                                try:
-                                    (
-                                        supabase
-                                        .table("movimentacoes")
-                                        .delete()
-                                        .eq("id", id_item)
-                                        .eq("user_id", USER_ID)
-                                        .execute()
-                                    )
-                                except Exception:
-                                    for item_baixa in dados_baixa:
-                                        if (
-                                            isinstance(item_baixa, dict)
-                                            and item_baixa.get("id")
-                                            is not None
-                                        ):
-                                            (
-                                                supabase
-                                                .table("movimentacoes")
-                                                .delete()
-                                                .eq(
-                                                    "id",
-                                                    item_baixa["id"]
-                                                )
-                                                .eq(
-                                                    "user_id",
-                                                    USER_ID
-                                                )
-                                                .execute()
-                                            )
-                                    raise
-
-                                st.session_state["feedback_agenda"] = (
-                                    "✅ Compromisso marcado como pago em "
-                                    f"{categoria_destino_item}."
-                                )
-                                st.rerun()
-
-                            except Exception as e:
-                                st.error(
-                                    "Erro ao marcar como pago: "
-                                    f"{e}"
-                                )
-
-                else:
-                    col_status.caption("🟢 A Receber")
-
-                    if col_baixa.button(
-                        "💰 Receber",
-                        key=f"rec_{id_item}",
-                        use_container_width=True
-                    ):
-                        try:
-                            supabase.table("movimentacoes").delete().eq(
-                                "id", id_item
-                            ).eq("user_id", USER_ID).execute()
-
-                            supabase.table("movimentacoes").insert({
-                                "data": str(hoje),
-                                "valor": valor_item,
-                                "tipo": "Faturamento ou Receita (Entrada)",
-                                "descricao": f"{desc_pura} (Recebido)",
-                                "grupo_orcamentario": "💰 RECEITAS",
-                                "subcategoria": "Renda Extra / Recebimento",
-                                "satisfacao": "3 - Indispensável",
-                                "user_id": USER_ID
-                            }).execute()
-
-                            st.success("✅ Compromisso marcado como recebido.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao marcar como recebido: {e}")
-
-                if col_editar.button(
-                    "✏️ Editar",
-                    key=f"edit_agenda_{id_item}",
-                    use_container_width=True
-                ):
-                    st.session_state["agenda_editando_id"] = id_item
-                    st.session_state["agenda_excluir_id"] = None
-
-                if col_excluir.button(
-                    "🗑️ Excluir",
-                    key=f"delete_agenda_{id_item}",
-                    use_container_width=True
-                ):
-                    st.session_state["agenda_excluir_id"] = id_item
-                    st.session_state["agenda_editando_id"] = None
-
-                # Formulário de edição aberto apenas para o item escolhido.
-                if st.session_state["agenda_editando_id"] == id_item:
-                    with st.container(border=True):
-                        st.markdown(f"#### ✏️ Editando: {desc_pura}")
-
-                        if serie_id_item:
-                            st.caption(
-                                "Nome, valor e data alteram somente este "
-                                "vencimento. A categoria pode ser aplicada "
-                                "à série inteira."
+                            col_info.caption(
+                                "⚠️ Categoria não definida. Use Editar antes "
+                                "de marcar como pago."
                             )
 
-                        grupo_padrao_edicao = (
-                            grupo_destino_item
-                            if grupo_destino_item
-                            in CODIGOS_GRUPO_AGENDA
-                            else list(CODIGOS_GRUPO_AGENDA.keys())[0]
-                        )
+                    if eh_conta_pagar:
+                        col_status.caption("🔴 A Pagar")
 
-                        indice_grupo_edicao = list(
-                            CODIGOS_GRUPO_AGENDA.keys()
-                        ).index(grupo_padrao_edicao)
-
-                        grupo_edicao_agenda = st.selectbox(
-                            "Destinação Estratégica do Valor:",
-                            list(CODIGOS_GRUPO_AGENDA.keys()),
-                            index=indice_grupo_edicao,
-                            key=f"grupo_edicao_agenda_{id_item}"
-                        )
-
-                        categorias_edicao_agenda = (
-                            categorias_validas_agenda(
-                                grupo_edicao_agenda
-                            )
-                        )
-
-                        categoria_padrao_edicao = (
-                            categoria_destino_item
-                            if categoria_destino_item
-                            in categorias_edicao_agenda
-                            else categorias_edicao_agenda[0]
-                        )
-
-                        categoria_edicao_agenda = st.selectbox(
-                            "Subcategoria Correspondente:",
-                            categorias_edicao_agenda,
-                            index=categorias_edicao_agenda.index(
-                                categoria_padrao_edicao
-                            ),
-                            key=f"categoria_edicao_agenda_{id_item}"
-                        )
-
-                        with st.form(f"form_editar_agenda_{id_item}"):
-                            col_e1, col_e2 = st.columns([2, 1])
-
-                            nova_descricao = col_e1.text_input(
-                                "Nome do compromisso:",
-                                value=desc_pura
-                            )
-
-                            novo_valor = col_e2.number_input(
-                                "Valor (R$):",
-                                min_value=0.01,
-                                value=valor_item,
-                                step=0.01,
-                                format="%.2f"
-                            )
-
-                            col_e3, col_e4 = st.columns(2)
-
-                            nova_data = col_e3.date_input(
-                                "Data:",
-                                value=data_item
-                            )
-
-                            opcoes_status = ["A Pagar", "A Receber"]
-                            status_atual = (
-                                "A Pagar"
-                                if eh_conta_pagar
-                                else "A Receber"
-                            )
-
-                            novo_status = col_e4.selectbox(
-                                "Tipo do compromisso:",
-                                opcoes_status,
-                                index=opcoes_status.index(
-                                    status_atual
-                                )
-                            )
-
-                            aplicar_categoria_serie = False
-
-                            if serie_id_item:
-                                aplicar_categoria_serie = st.checkbox(
-                                    "Aplicar esta categoria a todas as "
-                                    "parcelas/mensalidades da série",
-                                    value=False
-                                )
-
-                            col_salvar, col_cancelar = st.columns(2)
-
-                            salvar_edicao = (
-                                col_salvar.form_submit_button(
-                                    "💾 Salvar alterações",
-                                    use_container_width=True
-                                )
-                            )
-
-                            cancelar_edicao = (
-                                col_cancelar.form_submit_button(
-                                    "Cancelar",
-                                    use_container_width=True
-                                )
-                            )
-
-                        if salvar_edicao:
-                            descricao_limpa = str(
-                                nova_descricao or ""
-                            ).strip()
-
-                            if not descricao_limpa:
+                        if col_baixa.button(
+                            "✅ Pagar",
+                            key=f"pay_{id_item}",
+                            use_container_width=True
+                        ):
+                            if not (
+                                grupo_destino_item
+                                and categoria_destino_item
+                            ):
                                 st.warning(
-                                    "Informe um nome para o compromisso."
-                                )
-                            elif float(novo_valor or 0) <= 0:
-                                st.warning(
-                                    "O valor precisa ser maior que zero."
+                                    "Defina o grupo e a subcategoria deste "
+                                    "compromisso em Editar antes de pagar."
                                 )
                             else:
-                                if novo_status == "A Pagar":
-                                    novo_grupo_agenda = (
-                                        "📅 AGENDA: CONTAS A PAGAR"
-                                    )
-                                    novo_tipo = (
-                                        "📱 Saída Dinheiro / Pix "
-                                        "(Débito)"
-                                    )
-                                    nova_subcategoria = (
-                                        categoria_edicao_agenda
-                                    )
-                                    novos_metadados = (
-                                        definir_metadado_agenda(
-                                            texto_metadados,
-                                            "G",
-                                            CODIGOS_GRUPO_AGENDA[
-                                                grupo_edicao_agenda
-                                            ]
-                                        )
-                                    )
-                                else:
-                                    novo_grupo_agenda = (
-                                        "📅 AGENDA: CONTAS A RECEBER"
-                                    )
-                                    novo_tipo = (
-                                        "Faturamento ou Receita "
-                                        "(Entrada)"
-                                    )
-                                    nova_subcategoria = (
-                                        "Valores a Receber"
-                                    )
-                                    novos_metadados = texto_metadados
-
                                 try:
-                                    (
+                                    resposta_baixa = (
                                         supabase
                                         .table("movimentacoes")
-                                        .update({
-                                            "data": str(nova_data),
-                                            "valor": float(novo_valor),
-                                            "tipo": novo_tipo,
+                                        .insert({
+                                            "data": str(hoje),
+                                            "valor": valor_item,
+                                            "tipo": (
+                                                "📱 Saída Dinheiro / Pix "
+                                                "(Débito)"
+                                            ),
                                             "descricao": (
-                                                "[AGENDA COMPROMISSO] "
-                                                f"{descricao_limpa}"
+                                                f"{desc_pura} (Pago)"
                                             ),
                                             "grupo_orcamentario": (
-                                                novo_grupo_agenda
+                                                grupo_destino_item
                                             ),
                                             "subcategoria": (
-                                                nova_subcategoria
+                                                categoria_destino_item
                                             ),
                                             "satisfacao": (
-                                                novos_metadados
-                                            )
+                                                "3 - Indispensável"
+                                            ),
+                                            "user_id": USER_ID
                                         })
-                                        .eq("id", id_item)
-                                        .eq("user_id", USER_ID)
                                         .execute()
                                     )
 
-                                    if (
-                                        serie_id_item
-                                        and aplicar_categoria_serie
-                                        and novo_status == "A Pagar"
-                                    ):
-                                        linhas_da_serie = (
-                                            df_todos_dados[
-                                                df_todos_dados[
-                                                    "satisfacao"
-                                                ]
-                                                .fillna("")
-                                                .astype(str)
-                                                .apply(
-                                                    lambda texto: (
-                                                        extrair_metadado_agenda(
-                                                            texto,
-                                                            "S"
-                                                        )
-                                                        or
-                                                        extrair_metadado_agenda(
-                                                            texto,
-                                                            "SERIE"
-                                                        )
-                                                    )
-                                                    == serie_id_item
-                                                )
-                                            ]
+                                    dados_baixa = (
+                                        getattr(
+                                            resposta_baixa,
+                                            "data",
+                                            None
                                         )
+                                        or []
+                                    )
 
-                                        for _, linha_serie in (
-                                            linhas_da_serie.iterrows()
-                                        ):
-                                            meta_linha_serie = (
-                                                definir_metadado_agenda(
-                                                    str(
-                                                        linha_serie.get(
-                                                            "satisfacao"
-                                                        )
-                                                        or ""
-                                                    ),
-                                                    "G",
-                                                    CODIGOS_GRUPO_AGENDA[
-                                                        grupo_edicao_agenda
-                                                    ]
-                                                )
-                                            )
-
-                                            (
-                                                supabase
-                                                .table(
-                                                    "movimentacoes"
-                                                )
-                                                .update({
-                                                    "subcategoria": (
-                                                        categoria_edicao_agenda
-                                                    ),
-                                                    "satisfacao": (
-                                                        meta_linha_serie
+                                    try:
+                                        (
+                                            supabase
+                                            .table("movimentacoes")
+                                            .delete()
+                                            .eq("id", id_item)
+                                            .eq("user_id", USER_ID)
+                                            .execute()
+                                        )
+                                    except Exception:
+                                        for item_baixa in dados_baixa:
+                                            if (
+                                                isinstance(item_baixa, dict)
+                                                and item_baixa.get("id")
+                                                is not None
+                                            ):
+                                                (
+                                                    supabase
+                                                    .table("movimentacoes")
+                                                    .delete()
+                                                    .eq(
+                                                        "id",
+                                                        item_baixa["id"]
                                                     )
-                                                })
-                                                .eq(
-                                                    "id",
-                                                    int(
-                                                        linha_serie[
-                                                            "id"
-                                                        ]
+                                                    .eq(
+                                                        "user_id",
+                                                        USER_ID
                                                     )
+                                                    .execute()
                                                 )
-                                                .eq(
-                                                    "user_id",
-                                                    USER_ID
-                                                )
-                                                .execute()
-                                            )
+                                        raise
 
-                                    st.session_state[
-                                        "agenda_editando_id"
-                                    ] = None
-                                    st.session_state[
-                                        "feedback_agenda"
-                                    ] = (
-                                        "✅ Compromisso atualizado com "
-                                        "a categoria correta."
+                                    st.session_state["feedback_agenda"] = (
+                                        "✅ Compromisso marcado como pago em "
+                                        f"{categoria_destino_item}."
                                     )
                                     st.rerun()
 
                                 except Exception as e:
                                     st.error(
-                                        "Erro ao atualizar o "
-                                        f"compromisso: {e}"
+                                        "Erro ao marcar como pago: "
+                                        f"{e}"
                                     )
 
-                        if cancelar_edicao:
-                            st.session_state[
-                                "agenda_editando_id"
-                            ] = None
-                            st.rerun()
+                    else:
+                        col_status.caption("🟢 A Receber")
 
-                # Confirmação explícita antes da exclusão definitiva.
-                if st.session_state["agenda_excluir_id"] == id_item:
-                    with st.container(border=True):
-                        st.warning(
-                            f"Excluir o compromisso “{desc_pura}”?"
-                        )
-
-                        escopo_exclusao = "Somente este vencimento"
-
-                        if serie_id_item:
-                            escopo_exclusao = st.radio(
-                                "O que deseja excluir?",
-                                [
-                                    "Somente este vencimento",
-                                    "Este e os próximos vencimentos",
-                                    "Toda a série"
-                                ],
-                                key=f"escopo_delete_agenda_{id_item}"
-                            )
-
-                        col_confirma, col_cancela = st.columns(2)
-
-                        if col_confirma.button(
-                            "Confirmar exclusão",
-                            key=f"confirm_delete_agenda_{id_item}",
-                            type="primary",
+                        if col_baixa.button(
+                            "💰 Receber",
+                            key=f"rec_{id_item}",
                             use_container_width=True
                         ):
                             try:
-                                consulta_exclusao = supabase.table(
-                                    "movimentacoes"
-                                ).delete().eq(
-                                    "user_id",
-                                    USER_ID
+                                supabase.table("movimentacoes").delete().eq(
+                                    "id", id_item
+                                ).eq("user_id", USER_ID).execute()
+
+                                supabase.table("movimentacoes").insert({
+                                    "data": str(hoje),
+                                    "valor": valor_item,
+                                    "tipo": "Faturamento ou Receita (Entrada)",
+                                    "descricao": f"{desc_pura} (Recebido)",
+                                    "grupo_orcamentario": "💰 RECEITAS",
+                                    "subcategoria": "Renda Extra / Recebimento",
+                                    "satisfacao": "3 - Indispensável",
+                                    "user_id": USER_ID
+                                }).execute()
+
+                                st.success("✅ Compromisso marcado como recebido.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro ao marcar como recebido: {e}")
+
+                    if col_editar.button(
+                        "✏️ Editar",
+                        key=f"edit_agenda_{id_item}",
+                        use_container_width=True
+                    ):
+                        st.session_state["agenda_editando_id"] = id_item
+                        st.session_state["agenda_excluir_id"] = None
+
+                    if col_excluir.button(
+                        "🗑️ Excluir",
+                        key=f"delete_agenda_{id_item}",
+                        use_container_width=True
+                    ):
+                        st.session_state["agenda_excluir_id"] = id_item
+                        st.session_state["agenda_editando_id"] = None
+
+                    # Formulário de edição aberto apenas para o item escolhido.
+                    if st.session_state["agenda_editando_id"] == id_item:
+                        with st.container(border=True):
+                            st.markdown(f"#### ✏️ Editando: {desc_pura}")
+
+                            if serie_id_item:
+                                st.caption(
+                                    "Nome, valor e data alteram somente este "
+                                    "vencimento. A categoria pode ser aplicada "
+                                    "à série inteira."
                                 )
 
-                                if (
-                                    serie_id_item
-                                    and escopo_exclusao == "Toda a série"
-                                ):
-                                    consulta_exclusao = (
-                                        consulta_exclusao.ilike(
-                                            "satisfacao",
-                                            (
-                                                f"%SERIE:{serie_id_item}%"
-                                                if "SERIE:" in texto_metadados
-                                                else f"%S:{serie_id_item}%"
-                                            )
-                                        )
+                            grupo_padrao_edicao = (
+                                grupo_destino_item
+                                if grupo_destino_item
+                                in CODIGOS_GRUPO_AGENDA
+                                else list(CODIGOS_GRUPO_AGENDA.keys())[0]
+                            )
+
+                            indice_grupo_edicao = list(
+                                CODIGOS_GRUPO_AGENDA.keys()
+                            ).index(grupo_padrao_edicao)
+
+                            grupo_edicao_agenda = st.selectbox(
+                                "Destinação Estratégica do Valor:",
+                                list(CODIGOS_GRUPO_AGENDA.keys()),
+                                index=indice_grupo_edicao,
+                                key=f"grupo_edicao_agenda_{id_item}"
+                            )
+
+                            categorias_edicao_agenda = (
+                                categorias_validas_agenda(
+                                    grupo_edicao_agenda
+                                )
+                            )
+
+                            categoria_padrao_edicao = (
+                                categoria_destino_item
+                                if categoria_destino_item
+                                in categorias_edicao_agenda
+                                else categorias_edicao_agenda[0]
+                            )
+
+                            categoria_edicao_agenda = st.selectbox(
+                                "Subcategoria Correspondente:",
+                                categorias_edicao_agenda,
+                                index=categorias_edicao_agenda.index(
+                                    categoria_padrao_edicao
+                                ),
+                                key=f"categoria_edicao_agenda_{id_item}"
+                            )
+
+                            with st.form(f"form_editar_agenda_{id_item}"):
+                                col_e1, col_e2 = st.columns([2, 1])
+
+                                nova_descricao = col_e1.text_input(
+                                    "Nome do compromisso:",
+                                    value=desc_pura
+                                )
+
+                                novo_valor = col_e2.number_input(
+                                    "Valor (R$):",
+                                    min_value=0.01,
+                                    value=valor_item,
+                                    step=0.01,
+                                    format="%.2f"
+                                )
+
+                                col_e3, col_e4 = st.columns(2)
+
+                                nova_data = col_e3.date_input(
+                                    "Data:",
+                                    value=data_item
+                                )
+
+                                opcoes_status = ["A Pagar", "A Receber"]
+                                status_atual = (
+                                    "A Pagar"
+                                    if eh_conta_pagar
+                                    else "A Receber"
+                                )
+
+                                novo_status = col_e4.selectbox(
+                                    "Tipo do compromisso:",
+                                    opcoes_status,
+                                    index=opcoes_status.index(
+                                        status_atual
+                                    )
+                                )
+
+                                aplicar_categoria_serie = False
+
+                                if serie_id_item:
+                                    aplicar_categoria_serie = st.checkbox(
+                                        "Aplicar esta categoria a todas as "
+                                        "parcelas/mensalidades da série",
+                                        value=False
                                     )
 
-                                elif (
-                                    serie_id_item
-                                    and escopo_exclusao
-                                    == "Este e os próximos vencimentos"
-                                ):
-                                    consulta_exclusao = (
-                                        consulta_exclusao.ilike(
-                                            "satisfacao",
-                                            (
-                                                f"%SERIE:{serie_id_item}%"
-                                                if "SERIE:" in texto_metadados
-                                                else f"%S:{serie_id_item}%"
-                                            )
-                                        ).gte(
-                                            "data",
-                                            str(data_item)
-                                        )
-                                    )
+                                col_salvar, col_cancelar = st.columns(2)
 
+                                salvar_edicao = (
+                                    col_salvar.form_submit_button(
+                                        "💾 Salvar alterações",
+                                        use_container_width=True
+                                    )
+                                )
+
+                                cancelar_edicao = (
+                                    col_cancelar.form_submit_button(
+                                        "Cancelar",
+                                        use_container_width=True
+                                    )
+                                )
+
+                            if salvar_edicao:
+                                descricao_limpa = str(
+                                    nova_descricao or ""
+                                ).strip()
+
+                                if not descricao_limpa:
+                                    st.warning(
+                                        "Informe um nome para o compromisso."
+                                    )
+                                elif float(novo_valor or 0) <= 0:
+                                    st.warning(
+                                        "O valor precisa ser maior que zero."
+                                    )
                                 else:
-                                    consulta_exclusao = (
-                                        consulta_exclusao.eq(
-                                            "id",
-                                            id_item
+                                    if novo_status == "A Pagar":
+                                        novo_grupo_agenda = (
+                                            "📅 AGENDA: CONTAS A PAGAR"
                                         )
-                                    )
+                                        novo_tipo = (
+                                            "📱 Saída Dinheiro / Pix "
+                                            "(Débito)"
+                                        )
+                                        nova_subcategoria = (
+                                            categoria_edicao_agenda
+                                        )
+                                        novos_metadados = (
+                                            definir_metadado_agenda(
+                                                texto_metadados,
+                                                "G",
+                                                CODIGOS_GRUPO_AGENDA[
+                                                    grupo_edicao_agenda
+                                                ]
+                                            )
+                                        )
+                                    else:
+                                        novo_grupo_agenda = (
+                                            "📅 AGENDA: CONTAS A RECEBER"
+                                        )
+                                        novo_tipo = (
+                                            "Faturamento ou Receita "
+                                            "(Entrada)"
+                                        )
+                                        nova_subcategoria = (
+                                            "Valores a Receber"
+                                        )
+                                        novos_metadados = texto_metadados
 
-                                consulta_exclusao.execute()
+                                    try:
+                                        (
+                                            supabase
+                                            .table("movimentacoes")
+                                            .update({
+                                                "data": str(nova_data),
+                                                "valor": float(novo_valor),
+                                                "tipo": novo_tipo,
+                                                "descricao": (
+                                                    "[AGENDA COMPROMISSO] "
+                                                    f"{descricao_limpa}"
+                                                ),
+                                                "grupo_orcamentario": (
+                                                    novo_grupo_agenda
+                                                ),
+                                                "subcategoria": (
+                                                    nova_subcategoria
+                                                ),
+                                                "satisfacao": (
+                                                    novos_metadados
+                                                )
+                                            })
+                                            .eq("id", id_item)
+                                            .eq("user_id", USER_ID)
+                                            .execute()
+                                        )
 
+                                        if (
+                                            serie_id_item
+                                            and aplicar_categoria_serie
+                                            and novo_status == "A Pagar"
+                                        ):
+                                            linhas_da_serie = (
+                                                df_todos_dados[
+                                                    df_todos_dados[
+                                                        "satisfacao"
+                                                    ]
+                                                    .fillna("")
+                                                    .astype(str)
+                                                    .apply(
+                                                        lambda texto: (
+                                                            extrair_metadado_agenda(
+                                                                texto,
+                                                                "S"
+                                                            )
+                                                            or
+                                                            extrair_metadado_agenda(
+                                                                texto,
+                                                                "SERIE"
+                                                            )
+                                                        )
+                                                        == serie_id_item
+                                                    )
+                                                ]
+                                            )
+
+                                            for _, linha_serie in (
+                                                linhas_da_serie.iterrows()
+                                            ):
+                                                meta_linha_serie = (
+                                                    definir_metadado_agenda(
+                                                        str(
+                                                            linha_serie.get(
+                                                                "satisfacao"
+                                                            )
+                                                            or ""
+                                                        ),
+                                                        "G",
+                                                        CODIGOS_GRUPO_AGENDA[
+                                                            grupo_edicao_agenda
+                                                        ]
+                                                    )
+                                                )
+
+                                                (
+                                                    supabase
+                                                    .table(
+                                                        "movimentacoes"
+                                                    )
+                                                    .update({
+                                                        "subcategoria": (
+                                                            categoria_edicao_agenda
+                                                        ),
+                                                        "satisfacao": (
+                                                            meta_linha_serie
+                                                        )
+                                                    })
+                                                    .eq(
+                                                        "id",
+                                                        id_seguro_registro(
+                                                            linha_serie.get(
+                                                                "id"
+                                                            )
+                                                        )
+                                                    )
+                                                    .eq(
+                                                        "user_id",
+                                                        USER_ID
+                                                    )
+                                                    .execute()
+                                                )
+
+                                        st.session_state[
+                                            "agenda_editando_id"
+                                        ] = None
+                                        st.session_state[
+                                            "feedback_agenda"
+                                        ] = (
+                                            "✅ Compromisso atualizado com "
+                                            "a categoria correta."
+                                        )
+                                        st.rerun()
+
+                                    except Exception as e:
+                                        st.error(
+                                            "Erro ao atualizar o "
+                                            f"compromisso: {e}"
+                                        )
+
+                            if cancelar_edicao:
                                 st.session_state[
-                                    "agenda_excluir_id"
+                                    "agenda_editando_id"
                                 ] = None
-                                st.success(
-                                    "🗑️ Compromisso(s) excluído(s)."
-                                )
                                 st.rerun()
 
-                            except Exception as e:
-                                st.error(
-                                    "Erro ao excluir o compromisso: "
-                                    f"{e}"
+                    # Confirmação explícita antes da exclusão definitiva.
+                    if st.session_state["agenda_excluir_id"] == id_item:
+                        with st.container(border=True):
+                            st.warning(
+                                f"Excluir o compromisso “{desc_pura}”?"
+                            )
+
+                            escopo_exclusao = "Somente este vencimento"
+
+                            if serie_id_item:
+                                escopo_exclusao = st.radio(
+                                    "O que deseja excluir?",
+                                    [
+                                        "Somente este vencimento",
+                                        "Este e os próximos vencimentos",
+                                        "Toda a série"
+                                    ],
+                                    key=f"escopo_delete_agenda_{id_item}"
                                 )
 
-                        if col_cancela.button(
-                            "Não, cancelar",
-                            key=f"cancel_delete_agenda_{id_item}",
-                            use_container_width=True
-                        ):
-                            st.session_state["agenda_excluir_id"] = None
-                            st.rerun()
+                            col_confirma, col_cancela = st.columns(2)
 
+                            if col_confirma.button(
+                                "Confirmar exclusão",
+                                key=f"confirm_delete_agenda_{id_item}",
+                                type="primary",
+                                use_container_width=True
+                            ):
+                                try:
+                                    consulta_exclusao = supabase.table(
+                                        "movimentacoes"
+                                    ).delete().eq(
+                                        "user_id",
+                                        USER_ID
+                                    )
+
+                                    if (
+                                        serie_id_item
+                                        and escopo_exclusao == "Toda a série"
+                                    ):
+                                        consulta_exclusao = (
+                                            consulta_exclusao.ilike(
+                                                "satisfacao",
+                                                (
+                                                    f"%SERIE:{serie_id_item}%"
+                                                    if "SERIE:" in texto_metadados
+                                                    else f"%S:{serie_id_item}%"
+                                                )
+                                            )
+                                        )
+
+                                    elif (
+                                        serie_id_item
+                                        and escopo_exclusao
+                                        == "Este e os próximos vencimentos"
+                                    ):
+                                        consulta_exclusao = (
+                                            consulta_exclusao.ilike(
+                                                "satisfacao",
+                                                (
+                                                    f"%SERIE:{serie_id_item}%"
+                                                    if "SERIE:" in texto_metadados
+                                                    else f"%S:{serie_id_item}%"
+                                                )
+                                            ).gte(
+                                                "data",
+                                                str(data_item)
+                                            )
+                                        )
+
+                                    else:
+                                        consulta_exclusao = (
+                                            consulta_exclusao.eq(
+                                                "id",
+                                                id_item
+                                            )
+                                        )
+
+                                    consulta_exclusao.execute()
+
+                                    st.session_state[
+                                        "agenda_excluir_id"
+                                    ] = None
+                                    st.success(
+                                        "🗑️ Compromisso(s) excluído(s)."
+                                    )
+                                    st.rerun()
+
+                                except Exception as e:
+                                    st.error(
+                                        "Erro ao excluir o compromisso: "
+                                        f"{e}"
+                                    )
+
+                            if col_cancela.button(
+                                "Não, cancelar",
+                                key=f"cancel_delete_agenda_{id_item}",
+                                use_container_width=True
+                            ):
+                                st.session_state["agenda_excluir_id"] = None
+                                st.rerun()
+
+                except Exception as erro_compromisso:
+                    identificador_erro = texto_seguro_registro(
+                        row.get("id"),
+                        "desconhecido"
+                    )
+
+                    st.error(
+                        "Um compromisso não pôde ser exibido, mas os "
+                        "demais continuam disponíveis."
+                    )
+                    st.code(
+                        f"Registro {identificador_erro} - "
+                        f"{type(erro_compromisso).__name__}: "
+                        f"{erro_compromisso}",
+                        language="text"
+                    )
+                    st.markdown("---")
                 st.markdown("---")
         else:
             st.info("Nenhum compromisso agendado.")
