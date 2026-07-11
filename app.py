@@ -987,6 +987,19 @@ MAPA_CATEGORIAS = {
 
 # Códigos compactos para guardar a categoria pretendida dentro da Agenda
 # sem substituir o grupo "AGENDA", necessário para identificar compromissos.
+CATEGORIAS_RECEITA = [
+    "Salário / Renda Base",
+    "Trabalho Extra / Freelancer",
+    "Prestação de Serviços",
+    "Venda de Bem",
+    "Aluguel Recebido",
+    "Reembolso",
+    "Comissão / Bonificação",
+    "Receitas de Negócio",
+    "Outros Recebimentos",
+]
+
+
 CODIGOS_GRUPO_AGENDA = {
     "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)": "E",
     "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)": "L",
@@ -2951,13 +2964,214 @@ with aba_agenda:
 
     with col_agenda2:
         st.subheader("💰 Agendar Valor (A Receber)")
-        with st.form("form_agenda_receber", clear_on_submit=True):
-            nome_recebivel = st.text_input("O que tem a receber?:")
-            valor_recebivel = st.number_input("Valor (R$):", min_value=0.0, step=0.01)
-            data_recebivel = st.date_input("Data de Expectativa:", datetime.date.today())
-            if st.form_submit_button("Agendar Recebimento") and nome_recebivel and valor_recebivel > 0:
-                supabase.table("movimentacoes").insert({"data": str(data_recebivel), "valor": float(valor_recebivel), "tipo": "Faturamento ou Receita (Entrada)", "descricao": f"[AGENDA COMPROMISSO] {nome_recebivel}", "grupo_orcamentario": "📅 AGENDA: CONTAS A RECEBER", "subcategoria": "Valores a Receber", "satisfacao": "3 - Indispensável", "user_id": USER_ID}).execute()
-                st.rerun()
+
+        modalidade_recebimento = st.selectbox(
+            "Tipo de recebimento:",
+            [
+                "Recebimento único",
+                "Recebimento parcelado",
+                "Receita recorrente mensal"
+            ],
+            key="modalidade_agendamento_receita",
+            help=(
+                "Parcelado possui quantidade definida. Receita recorrente "
+                "é usada para contratos mensais, aluguel e serviços contínuos."
+            )
+        )
+
+        categoria_recebimento = st.selectbox(
+            "Categoria da receita:",
+            CATEGORIAS_RECEITA,
+            index=CATEGORIAS_RECEITA.index(
+                "Trabalho Extra / Freelancer"
+            ),
+            key="categoria_novo_recebimento"
+        )
+
+        with st.form(
+            "form_agenda_receber_estavel",
+            clear_on_submit=True
+        ):
+            nome_recebivel = st.text_input(
+                "O que tem a receber?",
+                placeholder="Ex.: Trabalho extra, venda do iPad, aluguel"
+            )
+
+            valor_recebivel = st.number_input(
+                "Valor de cada recebimento (R$):",
+                min_value=0.0,
+                step=0.01,
+                format="%.2f"
+            )
+
+            data_recebivel = st.date_input(
+                "Data da primeira expectativa:",
+                hoje
+            )
+
+            quantidade_parcelas_receber = 1
+            meses_receita_recorrente = 1
+
+            if modalidade_recebimento == "Recebimento parcelado":
+                quantidade_parcelas_receber = st.number_input(
+                    "Quantidade total de parcelas:",
+                    min_value=2,
+                    max_value=120,
+                    value=2,
+                    step=1
+                )
+                st.caption(
+                    "Informe o valor de cada parcela, e não o valor total."
+                )
+
+            elif modalidade_recebimento == "Receita recorrente mensal":
+                meses_receita_recorrente = st.number_input(
+                    "Por quantos meses deseja programar?",
+                    min_value=2,
+                    max_value=60,
+                    value=12,
+                    step=1
+                )
+                st.caption(
+                    "Use para contratos mensais, aluguel e serviços "
+                    "recorrentes. A série pode ser renovada depois."
+                )
+
+            agendar_recebimento = st.form_submit_button(
+                "Agendar Recebimento",
+                use_container_width=True
+            )
+
+        if agendar_recebimento:
+            nome_recebivel_limpo = str(
+                nome_recebivel or ""
+            ).strip()
+
+            if not nome_recebivel_limpo:
+                st.warning("Informe o que você tem a receber.")
+            elif float(valor_recebivel or 0) <= 0:
+                st.warning(
+                    "O valor de cada recebimento precisa ser maior que zero."
+                )
+            else:
+                registros_receber = []
+                serie_receber = None
+
+                if modalidade_recebimento == "Recebimento único":
+                    registros_receber.append({
+                        "data": str(data_recebivel),
+                        "valor": float(valor_recebivel),
+                        "tipo": "Faturamento ou Receita (Entrada)",
+                        "descricao": (
+                            "[AGENDA COMPROMISSO] "
+                            f"{nome_recebivel_limpo}"
+                        ),
+                        "grupo_orcamentario": (
+                            "📅 AGENDA: CONTAS A RECEBER"
+                        ),
+                        "subcategoria": categoria_recebimento,
+                        "satisfacao": "3|MR:U",
+                        "user_id": USER_ID
+                    })
+
+                else:
+                    serie_receber = uuid.uuid4().hex[:10]
+
+                    if (
+                        modalidade_recebimento
+                        == "Recebimento parcelado"
+                    ):
+                        total_recebimentos = int(
+                            quantidade_parcelas_receber
+                        )
+                        modalidade_curta_receita = "P"
+                    else:
+                        total_recebimentos = int(
+                            meses_receita_recorrente
+                        )
+                        modalidade_curta_receita = "R"
+
+                    for indice in range(total_recebimentos):
+                        data_ocorrencia_receita = adicionar_meses(
+                            data_recebivel,
+                            indice
+                        )
+
+                        metadados_receita = (
+                            f"3|S:{serie_receber}"
+                            f"|M:{modalidade_curta_receita}"
+                            f"|O:{indice + 1}/{total_recebimentos}"
+                            "|MR:REC"
+                        )
+
+                        registros_receber.append({
+                            "data": str(data_ocorrencia_receita),
+                            "valor": float(valor_recebivel),
+                            "tipo": (
+                                "Faturamento ou Receita (Entrada)"
+                            ),
+                            "descricao": (
+                                "[AGENDA COMPROMISSO] "
+                                f"{nome_recebivel_limpo}"
+                            ),
+                            "grupo_orcamentario": (
+                                "📅 AGENDA: CONTAS A RECEBER"
+                            ),
+                            "subcategoria": categoria_recebimento,
+                            "satisfacao": metadados_receita,
+                            "user_id": USER_ID
+                        })
+
+                recebimentos_salvos = False
+
+                try:
+                    quantidade_recebimentos_salvos = (
+                        inserir_agendamentos_com_seguranca(
+                            supabase,
+                            registros_receber,
+                            USER_ID,
+                            serie_receber
+                        )
+                    )
+
+                    if (
+                        modalidade_recebimento
+                        == "Recebimento parcelado"
+                    ):
+                        mensagem_recebimento = (
+                            f"✅ {quantidade_recebimentos_salvos} "
+                            "parcelas a receber foram agendadas."
+                        )
+                    elif (
+                        modalidade_recebimento
+                        == "Receita recorrente mensal"
+                    ):
+                        mensagem_recebimento = (
+                            "✅ Receita recorrente programada por "
+                            f"{quantidade_recebimentos_salvos} meses."
+                        )
+                    else:
+                        mensagem_recebimento = (
+                            "✅ Recebimento agendado."
+                        )
+
+                    st.session_state["feedback_agenda"] = (
+                        mensagem_recebimento
+                    )
+                    recebimentos_salvos = True
+
+                except Exception as e:
+                    st.error(
+                        "Não foi possível agendar o recebimento. "
+                        "O sistema tentou desfazer qualquer série incompleta."
+                    )
+                    st.code(
+                        f"{type(e).__name__}: {e}",
+                        language="text"
+                    )
+
+                if recebimentos_salvos:
+                    st.rerun()
 
     st.markdown("---")
     st.subheader("📋 Seus Compromissos Mapeados")
@@ -3170,6 +3384,21 @@ with aba_agenda:
                                 "⚠️ Categoria não definida. Use Editar antes "
                                 "de marcar como pago."
                             )
+                    else:
+                        categoria_receita_item = texto_seguro_registro(
+                            row.get("subcategoria")
+                        )
+
+                        if categoria_receita_item in CATEGORIAS_RECEITA:
+                            col_info.caption(
+                                f"Categoria da receita: "
+                                f"{categoria_receita_item}"
+                            )
+                        else:
+                            col_info.caption(
+                                "⚠️ Categoria da receita não definida. "
+                                "Use Editar antes de receber."
+                            )
 
                     if eh_conta_pagar:
                         col_status.caption("🔴 A Pagar")
@@ -3277,26 +3506,113 @@ with aba_agenda:
                             key=f"rec_{id_item}",
                             use_container_width=True
                         ):
-                            try:
-                                supabase.table("movimentacoes").delete().eq(
-                                    "id", id_item
-                                ).eq("user_id", USER_ID).execute()
+                            categoria_receita_item = (
+                                texto_seguro_registro(
+                                    row.get("subcategoria")
+                                )
+                            )
 
-                                supabase.table("movimentacoes").insert({
-                                    "data": str(hoje),
-                                    "valor": valor_item,
-                                    "tipo": "Faturamento ou Receita (Entrada)",
-                                    "descricao": f"{desc_pura} (Recebido)",
-                                    "grupo_orcamentario": "💰 RECEITAS",
-                                    "subcategoria": "Renda Extra / Recebimento",
-                                    "satisfacao": "3 - Indispensável",
-                                    "user_id": USER_ID
-                                }).execute()
+                            if (
+                                categoria_receita_item
+                                not in CATEGORIAS_RECEITA
+                            ):
+                                st.warning(
+                                    "Defina a categoria da receita em "
+                                    "Editar antes de marcar como recebido."
+                                )
+                            else:
+                                try:
+                                    resposta_recebimento = (
+                                        supabase
+                                        .table("movimentacoes")
+                                        .insert({
+                                            "data": str(hoje),
+                                            "valor": valor_item,
+                                            "tipo": (
+                                                "Faturamento ou Receita "
+                                                "(Entrada)"
+                                            ),
+                                            "descricao": (
+                                                f"{desc_pura} (Recebido)"
+                                            ),
+                                            "grupo_orcamentario": (
+                                                "💰 RECEITAS"
+                                            ),
+                                            "subcategoria": (
+                                                categoria_receita_item
+                                            ),
+                                            "satisfacao": (
+                                                "3 - Indispensável"
+                                            ),
+                                            "user_id": USER_ID
+                                        })
+                                        .execute()
+                                    )
 
-                                st.success("✅ Compromisso marcado como recebido.")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Erro ao marcar como recebido: {e}")
+                                    dados_recebimento = (
+                                        getattr(
+                                            resposta_recebimento,
+                                            "data",
+                                            None
+                                        )
+                                        or []
+                                    )
+
+                                    try:
+                                        (
+                                            supabase
+                                            .table("movimentacoes")
+                                            .delete()
+                                            .eq("id", id_item)
+                                            .eq("user_id", USER_ID)
+                                            .execute()
+                                        )
+                                    except Exception:
+                                        for item_recebido in (
+                                            dados_recebimento
+                                        ):
+                                            if (
+                                                isinstance(
+                                                    item_recebido,
+                                                    dict
+                                                )
+                                                and item_recebido.get("id")
+                                                is not None
+                                            ):
+                                                (
+                                                    supabase
+                                                    .table(
+                                                        "movimentacoes"
+                                                    )
+                                                    .delete()
+                                                    .eq(
+                                                        "id",
+                                                        item_recebido["id"]
+                                                    )
+                                                    .eq(
+                                                        "user_id",
+                                                        USER_ID
+                                                    )
+                                                    .execute()
+                                                )
+                                        raise
+
+                                    st.session_state[
+                                        "feedback_agenda"
+                                    ] = (
+                                        "✅ Recebimento lançado em "
+                                        f"{categoria_receita_item}."
+                                    )
+                                    st.rerun()
+
+                                except Exception as e:
+                                    st.error(
+                                        "Erro ao marcar como recebido."
+                                    )
+                                    st.code(
+                                        f"{type(e).__name__}: {e}",
+                                        language="text"
+                                    )
 
                     if col_editar.button(
                         "✏️ Editar",
@@ -3365,6 +3681,33 @@ with aba_agenda:
                                 ),
                                 key=f"categoria_edicao_agenda_{id_item}"
                             )
+
+                            categoria_receita_edicao = (
+                                texto_seguro_registro(
+                                    row.get("subcategoria")
+                                )
+                            )
+
+                            if (
+                                categoria_receita_edicao
+                                not in CATEGORIAS_RECEITA
+                            ):
+                                categoria_receita_edicao = (
+                                    "Outros Recebimentos"
+                                )
+
+                            if not eh_conta_pagar:
+                                categoria_receita_edicao = st.selectbox(
+                                    "Categoria da receita:",
+                                    CATEGORIAS_RECEITA,
+                                    index=CATEGORIAS_RECEITA.index(
+                                        categoria_receita_edicao
+                                    ),
+                                    key=(
+                                        f"categoria_receita_edicao_"
+                                        f"{id_item}"
+                                    )
+                                )
 
                             with st.form(f"form_editar_agenda_{id_item}"):
                                 col_e1, col_e2 = st.columns([2, 1])
