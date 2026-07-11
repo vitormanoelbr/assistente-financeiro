@@ -20,6 +20,71 @@ def adicionar_meses(data_base: datetime.date, quantidade_meses: int) -> datetime
     return datetime.date(ano, mes, dia)
 
 
+def normalizar_data(valor):
+    """Converte datas do Supabase em date; devolve None para conteúdo inválido."""
+    if valor is None:
+        return None
+
+    try:
+        timestamp = pd.to_datetime(valor, errors="coerce")
+    except Exception:
+        return None
+
+    try:
+        if pd.isna(timestamp):
+            return None
+    except (TypeError, ValueError):
+        return None
+
+    if isinstance(timestamp, pd.Timestamp):
+        # Mantém o dia civil informado, sem deslocar pelo fuso horário.
+        if timestamp.tzinfo is not None:
+            timestamp = timestamp.tz_localize(None)
+        return timestamp.date()
+
+    if isinstance(timestamp, datetime.datetime):
+        return timestamp.date()
+
+    if isinstance(timestamp, datetime.date):
+        return timestamp
+
+    return None
+
+
+def normalizar_numero(valor, padrao=0.0):
+    """Converte números do banco sem quebrar com None, texto ou pd.NA."""
+    try:
+        convertido = pd.to_numeric(valor, errors="coerce")
+    except Exception:
+        return padrao
+
+    try:
+        if pd.isna(convertido):
+            return padrao
+    except (TypeError, ValueError):
+        return padrao
+
+    try:
+        return float(convertido)
+    except (TypeError, ValueError, OverflowError):
+        return padrao
+
+
+def normalizar_texto(valor, padrao=""):
+    """Converte valores em texto sem avaliar pd.NA como booleano."""
+    if valor is None:
+        return padrao
+
+    try:
+        if pd.isna(valor):
+            return padrao
+    except (TypeError, ValueError):
+        pass
+
+    texto = str(valor).strip()
+    return texto if texto else padrao
+
+
 def extrair_metadado_agenda(texto: str, chave: str) -> Optional[str]:
     """Lê metadados gravados no campo satisfação sem exigir nova tabela."""
     prefixo = f"{chave}:"
@@ -301,45 +366,46 @@ if supabase:
             res_data = resposta_completa.data
             df_todos_dados = pd.DataFrame(res_data)
 
-            df_todos_dados["valor"] = pd.to_numeric(
-                df_todos_dados["valor"],
-                errors="coerce"
-            ).fillna(0.0)
+            # Garante as colunas esperadas mesmo em registros antigos.
+            for coluna_obrigatoria in [
+                "id",
+                "data",
+                "descricao",
+                "grupo_orcamentario",
+                "subcategoria",
+                "valor",
+                "satisfacao",
+                "tipo",
+                "user_id",
+            ]:
+                if coluna_obrigatoria not in df_todos_dados.columns:
+                    df_todos_dados[coluna_obrigatoria] = None
 
-            df_todos_dados["data_ts"] = pd.to_datetime(
-                df_todos_dados["data"],
-                errors="coerce"
+            df_todos_dados["valor_original"] = df_todos_dados["valor"]
+            df_todos_dados["valor"] = df_todos_dados["valor"].apply(
+                lambda valor: normalizar_numero(valor, 0.0)
+            )
+            df_todos_dados["data_dt"] = df_todos_dados["data"].apply(
+                normalizar_data
             )
 
-            df_todos_dados["data_dt"] = (
-                df_todos_dados["data_ts"].dt.date
+            quantidade_datas_invalidas_global = int(
+                df_todos_dados["data_dt"].isna().sum()
+            )
+            quantidade_valores_invalidos_global = int(
+                df_todos_dados["valor_original"].apply(
+                    lambda valor: normalizar_numero(valor, None) is None
+                ).sum()
             )
             
             # Processamento de Configurações Globais e Metadados
             for item in res_data:
-                desc = str(item.get("descricao") or "")
-                subcat = str(item.get("subcategoria") or "")
-                grupo = str(item.get("grupo_orcamentario") or "")
-                tipo_mov = str(item.get("tipo") or "")
-                val_mov_convertido = pd.to_numeric(
-                    item.get("valor"),
-                    errors="coerce"
-                )
-                val_mov = (
-                    0.0
-                    if pd.isna(val_mov_convertido)
-                    else float(val_mov_convertido)
-                )
-
-                dt_item_convertido = pd.to_datetime(
-                    item.get("data"),
-                    errors="coerce"
-                )
-                dt_item = (
-                    None
-                    if pd.isna(dt_item_convertido)
-                    else dt_item_convertido.date()
-                )
+                desc = normalizar_texto(item.get("descricao"))
+                subcat = normalizar_texto(item.get("subcategoria"))
+                grupo = normalizar_texto(item.get("grupo_orcamentario"))
+                tipo_mov = normalizar_texto(item.get("tipo"))
+                val_mov = normalizar_numero(item.get("valor"), 0.0)
+                dt_item = normalizar_data(item.get("data"))
                 
                 if "[CONFIG_CARTAO]" in desc:
                     detalhes_cartao = str(item.get("satisfacao") or "")
@@ -377,7 +443,16 @@ if supabase:
                         "id": item["id"],
                         "nome": subcat,
                         "valor_original": val_mov,
-                        "parcela": float(item.get("satisfacao").split(" - ")[0] if " - " in str(item.get("satisfacao")) else 0)
+                        "parcela": normalizar_numero(
+                            normalizar_texto(item.get("satisfacao")).split(
+                                " - ", 1
+                            )[0]
+                            if " - " in normalizar_texto(
+                                item.get("satisfacao")
+                            )
+                            else 0,
+                            0.0
+                        )
                     })
                     continue
                 
@@ -411,18 +486,35 @@ if supabase:
                 df_filtrado = df_filtrado[~df_filtrado["grupo_orcamentario"].astype(str).str.upper().str.contains("AGENDA", na=False)]
                 
                 if not df_filtrado.empty:
-                    df_filtrado["ano"] = pd.to_datetime(df_filtrado["data_dt"]).dt.year
-                    df_filtrado["mes"] = pd.to_datetime(df_filtrado["data_dt"]).dt.month
-                    
-                    # Filtro estrito por mês do evento (Evita distorções de competência forçada)
-                    df_filtrado = df_filtrado[(df_filtrado["ano"] == ano_selected) & (df_filtrado["mes"] == mes_selected_num)]
+                    df_filtrado = df_filtrado[
+                        df_filtrado["data_dt"].notna()
+                    ].copy()
+                    df_filtrado["ano"] = df_filtrado["data_dt"].apply(
+                        lambda data: data.year
+                    )
+                    df_filtrado["mes"] = df_filtrado["data_dt"].apply(
+                        lambda data: data.month
+                    )
+
+                    # Filtro estrito por mês do evento.
+                    df_filtrado = df_filtrado[
+                        (df_filtrado["ano"] == int(ano_selected))
+                        & (df_filtrado["mes"] == int(mes_selected_num))
+                    ].copy()
 
             df_acumulado_mes_cheio = df_filtrado.copy()
 
             if janela_tempo == "Últimos 7 Dias" and not df_filtrado.empty:
-                df_filtrado = df_filtrado[(df_filtrado["data_dt"] >= (hoje - datetime.timedelta(days=7))) & (df_filtrado["data_dt"] <= hoje)]
+                df_filtrado = df_filtrado[
+                    (df_filtrado["data_dt"] >= (
+                        hoje - datetime.timedelta(days=7)
+                    ))
+                    & (df_filtrado["data_dt"] <= hoje)
+                ].copy()
             elif janela_tempo == "Somente Hoje" and not df_filtrado.empty:
-                df_filtrado = df_filtrado[df_filtrado["data_dt"] == hoje]
+                df_filtrado = df_filtrado[
+                    df_filtrado["data_dt"] == hoje
+                ].copy()
             
             if tag_busca and not df_filtrado.empty:
                 df_filtrado["descricao_lower"] = df_filtrado["descricao"].fillna("").astype(str).str.lower()
@@ -465,6 +557,18 @@ if supabase:
             deslogar_usuario()
         else:
             st.error(f"Erro no processamento dos dados: {e}")
+
+if not df_todos_dados.empty:
+    if quantidade_datas_invalidas_global > 0:
+        st.sidebar.warning(
+            f"{quantidade_datas_invalidas_global} registro(s) com data "
+            "inválida foram ignorados nos cálculos temporais."
+        )
+    if quantidade_valores_invalidos_global > 0:
+        st.sidebar.warning(
+            f"{quantidade_valores_invalidos_global} registro(s) com valor "
+            "inválido foram considerados como R$ 0,00."
+        )
 
 # --- ORIGENS DE VERDADE MATEMÁTICA ---
 saldo_real_exibido = renda_base_usuario + faturamento_extra_mes - gastos_dinheiro_caixa
@@ -513,17 +617,21 @@ fim_mes_atual = ultimo_dia_do_mes(hoje)
 
 if not df_todos_dados.empty:
     df_fluxo_base = df_todos_dados.copy()
-    df_fluxo_base["data_dt"] = pd.to_datetime(df_fluxo_base["data"]).dt.date
 
     for _, item_fluxo in df_fluxo_base.iterrows():
-        data_item = item_fluxo["data_dt"]
-        valor_item = float(item_fluxo.get("valor") or 0.0)
-        descricao_item = str(item_fluxo.get("descricao") or "Sem descrição")
-        grupo_item_original = str(item_fluxo.get("grupo_orcamentario") or "")
+        data_item = item_fluxo.get("data_dt")
+        valor_item = normalizar_numero(item_fluxo.get("valor"), 0.0)
+        descricao_item = normalizar_texto(
+            item_fluxo.get("descricao"),
+            "Sem descrição"
+        )
+        grupo_item_original = normalizar_texto(
+            item_fluxo.get("grupo_orcamentario")
+        )
         grupo_item = grupo_item_original.upper()
-        tipo_item = str(item_fluxo.get("tipo") or "")
+        tipo_item = normalizar_texto(item_fluxo.get("tipo"))
 
-        if valor_item <= 0:
+        if data_item is None or valor_item <= 0:
             continue
         if "CONFIG" in grupo_item or "[CONFIG_PERFIL]" in descricao_item or "[DIVIDA_ATIVA]" in descricao_item:
             continue
@@ -628,15 +736,6 @@ saldo_projetado_30_dias = calcular_saldo_horizonte(30)
 
 
 # --- CONTROLE DE CARTÕES E FATURAS ---
-def adicionar_meses(data_ref: datetime.date, meses: int) -> datetime.date:
-    total_meses = data_ref.month - 1 + meses
-    novo_ano = data_ref.year + total_meses // 12
-    novo_mes = total_meses % 12 + 1
-    ultimo_dia_novo_mes = ultimo_dia_do_mes(datetime.date(novo_ano, novo_mes, 1)).day
-    novo_dia = min(data_ref.day, ultimo_dia_novo_mes)
-    return datetime.date(novo_ano, novo_mes, novo_dia)
-
-
 def extrair_cartao_da_descricao(descricao: str) -> str:
     texto = str(descricao or "")
     marcador_inicio = "[CARTAO:"
@@ -694,7 +793,6 @@ valor_cartao_futuro_total = 0.0
 
 if not df_todos_dados.empty:
     df_cartao_movimentos = df_todos_dados.copy()
-    df_cartao_movimentos["data_dt"] = pd.to_datetime(df_cartao_movimentos["data"]).dt.date
     df_cartao_movimentos["tipo_str"] = df_cartao_movimentos["tipo"].fillna("").astype(str)
     df_cartao_movimentos["grupo_str"] = df_cartao_movimentos["grupo_orcamentario"].fillna("").astype(str)
     df_cartao_movimentos["descricao_str"] = df_cartao_movimentos["descricao"].fillna("").astype(str)
@@ -707,7 +805,15 @@ if not df_todos_dados.empty:
     df_cartao_movimentos = df_cartao_movimentos[mascara_cartao & mascara_operacional].copy()
 
     if not df_cartao_movimentos.empty:
-        df_cartao_movimentos["valor"] = df_cartao_movimentos["valor"].astype(float)
+        df_cartao_movimentos["valor"] = df_cartao_movimentos["valor"].apply(
+            lambda valor: normalizar_numero(valor, 0.0)
+        )
+        df_cartao_movimentos = df_cartao_movimentos[
+            df_cartao_movimentos["data_dt"].notna()
+            & (df_cartao_movimentos["valor"] > 0)
+        ].copy()
+
+    if not df_cartao_movimentos.empty:
         df_cartao_movimentos["Cartão"] = df_cartao_movimentos["descricao_str"].apply(extrair_cartao_da_descricao)
         df_cartao_movimentos["Descrição Limpa"] = (
             df_cartao_movimentos["descricao_str"]
@@ -717,9 +823,15 @@ if not df_todos_dados.empty:
         df_cartao_movimentos["Natureza"] = df_cartao_movimentos["satisfacao_str"].apply(
             lambda texto: "Assinatura" if "SUB:" in str(texto) else "Compra"
         )
-        df_cartao_movimentos["Ano"] = pd.to_datetime(df_cartao_movimentos["data_dt"]).dt.year
-        df_cartao_movimentos["Mes"] = pd.to_datetime(df_cartao_movimentos["data_dt"]).dt.month
-        df_cartao_movimentos["Mês"] = pd.to_datetime(df_cartao_movimentos["data_dt"]).dt.strftime("%Y-%m")
+        df_cartao_movimentos["Ano"] = df_cartao_movimentos["data_dt"].apply(
+            lambda data: data.year
+        )
+        df_cartao_movimentos["Mes"] = df_cartao_movimentos["data_dt"].apply(
+            lambda data: data.month
+        )
+        df_cartao_movimentos["Mês"] = df_cartao_movimentos["data_dt"].apply(
+            lambda data: data.strftime("%Y-%m")
+        )
 
         df_cartao_mes = df_cartao_movimentos[
             (df_cartao_movimentos["Ano"] == ano_selected) &
@@ -2867,7 +2979,7 @@ with aba_agenda:
 
         if not df_agenda_pura.empty:
             df_agenda_pura["data_agenda_ts"] = pd.to_datetime(
-                df_agenda_pura["data"],
+                df_agenda_pura["data_dt"],
                 errors="coerce"
             )
 
