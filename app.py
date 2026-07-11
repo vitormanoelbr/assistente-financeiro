@@ -823,7 +823,8 @@ MAPA_CATEGORIAS = {
     "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)": [
         "Lazer, Bares & Restaurantes", 
         "Delivery / iFood / Conforto", 
-        "Vestuário, Compras & Presentes", 
+        "Vestuário, Compras & Presentes",
+        "Eletrônicos & Tecnologia",
         "Estética, Cuidados & Academia", 
         "Viagens & Hobbies", 
         "Assinaturas (Netflix, Spotify)"
@@ -836,6 +837,106 @@ MAPA_CATEGORIAS = {
         "Infraestrutura & Custos Operacionais"
     ]
 }
+
+# Códigos compactos para guardar a categoria pretendida dentro da Agenda
+# sem substituir o grupo "AGENDA", necessário para identificar compromissos.
+CODIGOS_GRUPO_AGENDA = {
+    "🔴 50% Essencial (Sobrevivência e Obrigações Fixas)": "E",
+    "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)": "L",
+    "🚀 20% Aporte para a Liberdade (Investimentos e Futuro)": "A",
+    "📋 Quitação de Dívidas (Amortizações e Acordos)": "D",
+    "💼 Custos de Negócio (Projetos e Clínica)": "N",
+}
+
+GRUPOS_AGENDA_POR_CODIGO = {
+    codigo_grupo: nome_grupo
+    for nome_grupo, codigo_grupo in CODIGOS_GRUPO_AGENDA.items()
+}
+
+
+def categorias_validas_agenda(nome_grupo: str):
+    """Retorna categorias utilizáveis pela Agenda."""
+    return [
+        categoria
+        for categoria in MAPA_CATEGORIAS.get(nome_grupo, [])
+        if "CRIAR NOVA META" not in str(categoria).upper()
+    ]
+
+
+def definir_metadado_agenda(texto: str, chave: str, valor: str) -> str:
+    """Adiciona ou troca um metadado, preservando série, ordem e modalidade."""
+    partes = [
+        parte.strip()
+        for parte in str(texto or "").split("|")
+        if parte.strip()
+    ]
+
+    prefixo = f"{chave}:"
+    encontrou = False
+    resultado = []
+
+    for parte in partes:
+        if parte.startswith(prefixo):
+            resultado.append(f"{chave}:{valor}")
+            encontrou = True
+        else:
+            resultado.append(parte)
+
+    if not encontrou:
+        resultado.append(f"{chave}:{valor}")
+
+    return "|".join(resultado) if resultado else f"{chave}:{valor}"
+
+
+def inferir_grupo_por_subcategoria_agenda(subcategoria: str):
+    """Tenta recuperar o grupo de registros antigos pela subcategoria."""
+    subcategoria_limpa = str(subcategoria or "").strip()
+
+    if not subcategoria_limpa:
+        return None
+
+    grupos_encontrados = [
+        grupo
+        for grupo in CODIGOS_GRUPO_AGENDA
+        if subcategoria_limpa in categorias_validas_agenda(grupo)
+    ]
+
+    if len(grupos_encontrados) == 1:
+        return grupos_encontrados[0]
+
+    return None
+
+
+def resolver_categoria_destino_agenda(
+    texto_metadados: str,
+    subcategoria: str
+):
+    """Resolve grupo e subcategoria que serão usados quando a conta for paga."""
+    codigo_grupo = extrair_metadado_agenda(
+        texto_metadados,
+        "G"
+    )
+
+    grupo_destino = GRUPOS_AGENDA_POR_CODIGO.get(
+        str(codigo_grupo or "").strip()
+    )
+
+    if grupo_destino is None:
+        grupo_destino = inferir_grupo_por_subcategoria_agenda(
+            subcategoria
+        )
+
+    categoria_destino = str(subcategoria or "").strip()
+
+    if (
+        grupo_destino is None
+        or categoria_destino
+        not in categorias_validas_agenda(grupo_destino)
+    ):
+        return None, None
+
+    return grupo_destino, categoria_destino
+
 
 aba_diagnostico, aba_fluxo_futuro, aba_cartoes, aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
     "🧭 Diagnóstico Financeiro",
@@ -2469,6 +2570,28 @@ with aba_agenda:
             )
         )
 
+        st.markdown("##### Categoria do gasto")
+
+        grupo_destino_agenda = st.selectbox(
+            "Destinação Estratégica do Valor:",
+            list(CODIGOS_GRUPO_AGENDA.keys()),
+            key="grupo_destino_nova_conta_agenda",
+            help=(
+                "Quando a conta for marcada como paga, ela será lançada "
+                "neste grupo orçamentário."
+            )
+        )
+
+        opcoes_categoria_nova_agenda = categorias_validas_agenda(
+            grupo_destino_agenda
+        )
+
+        categoria_destino_agenda = st.selectbox(
+            "Subcategoria Correspondente:",
+            opcoes_categoria_nova_agenda,
+            key="categoria_destino_nova_conta_agenda"
+        )
+
         with st.form("form_agenda_pagar_estavel", clear_on_submit=True):
             name_boleto = st.text_input(
                 "Nome da Conta / Boleto:",
@@ -2538,8 +2661,11 @@ with aba_agenda:
                         "tipo": "📱 Saída Dinheiro / Pix (Débito)",
                         "descricao": f"[AGENDA COMPROMISSO] {nome_limpo}",
                         "grupo_orcamentario": "📅 AGENDA: CONTAS A PAGAR",
-                        "subcategoria": "Conta Única",
-                        "satisfacao": "3 - Indispensável",
+                        "subcategoria": categoria_destino_agenda,
+                        "satisfacao": (
+                            "3|G:"
+                            f"{CODIGOS_GRUPO_AGENDA[grupo_destino_agenda]}"
+                        ),
                         "user_id": USER_ID
                     })
 
@@ -2549,11 +2675,11 @@ with aba_agenda:
                     if modalidade_agendamento == "Conta parcelada":
                         total_ocorrencias = int(quantidade_parcelas)
                         modalidade_curta = "P"
-                        subcategoria_meta = "Conta Parcelada"
+                        subcategoria_meta = categoria_destino_agenda
                     else:
                         total_ocorrencias = int(meses_programados)
                         modalidade_curta = "R"
-                        subcategoria_meta = "Conta Recorrente"
+                        subcategoria_meta = categoria_destino_agenda
 
                     for indice in range(total_ocorrencias):
                         data_ocorrencia = adicionar_meses(
@@ -2566,6 +2692,7 @@ with aba_agenda:
                         metadados = (
                             f"3|S:{serie_id}|M:{modalidade_curta}"
                             f"|O:{indice + 1}/{total_ocorrencias}"
+                            f"|G:{CODIGOS_GRUPO_AGENDA[grupo_destino_agenda]}"
                         )
 
                         registros_agenda.append({
@@ -2716,6 +2843,13 @@ with aba_agenda:
                     or extrair_metadado_agenda(texto_metadados, "O")
                 )
 
+                grupo_destino_item, categoria_destino_item = (
+                    resolver_categoria_destino_agenda(
+                        texto_metadados,
+                        row.get("subcategoria")
+                    )
+                )
+
                 if modalidade_item == "P":
                     modalidade_item = "PARCELADA"
                 elif modalidade_item == "R":
@@ -2748,6 +2882,18 @@ with aba_agenda:
                 )
 
                 if eh_conta_pagar:
+                    if grupo_destino_item and categoria_destino_item:
+                        col_info.caption(
+                            f"Categoria: {grupo_destino_item} > "
+                            f"{categoria_destino_item}"
+                        )
+                    else:
+                        col_info.caption(
+                            "⚠️ Categoria não definida. Use Editar antes "
+                            "de marcar como pago."
+                        )
+
+                if eh_conta_pagar:
                     col_status.caption("🔴 A Pagar")
 
                     if col_baixa.button(
@@ -2755,31 +2901,95 @@ with aba_agenda:
                         key=f"pay_{id_item}",
                         use_container_width=True
                     ):
-                        try:
-                            supabase.table("movimentacoes").delete().eq(
-                                "id", id_item
-                            ).eq("user_id", USER_ID).execute()
+                        if not (
+                            grupo_destino_item
+                            and categoria_destino_item
+                        ):
+                            st.warning(
+                                "Defina o grupo e a subcategoria deste "
+                                "compromisso em Editar antes de pagar."
+                            )
+                        else:
+                            try:
+                                resposta_baixa = (
+                                    supabase
+                                    .table("movimentacoes")
+                                    .insert({
+                                        "data": str(hoje),
+                                        "valor": valor_item,
+                                        "tipo": (
+                                            "📱 Saída Dinheiro / Pix "
+                                            "(Débito)"
+                                        ),
+                                        "descricao": (
+                                            f"{desc_pura} (Pago)"
+                                        ),
+                                        "grupo_orcamentario": (
+                                            grupo_destino_item
+                                        ),
+                                        "subcategoria": (
+                                            categoria_destino_item
+                                        ),
+                                        "satisfacao": (
+                                            "3 - Indispensável"
+                                        ),
+                                        "user_id": USER_ID
+                                    })
+                                    .execute()
+                                )
 
-                            supabase.table("movimentacoes").insert({
-                                "data": str(hoje),
-                                "valor": valor_item,
-                                "tipo": "📱 Saída Dinheiro / Pix (Débito)",
-                                "descricao": f"{desc_pura} (Pago)",
-                                "grupo_orcamentario": (
-                                    "🔴 50% Essencial "
-                                    "(Sobrevivência e Obrigações Fixas)"
-                                ),
-                                "subcategoria": (
-                                    "Contas Fixas (Luz, Água, Internet)"
-                                ),
-                                "satisfacao": "3 - Indispensável",
-                                "user_id": USER_ID
-                            }).execute()
+                                dados_baixa = (
+                                    getattr(
+                                        resposta_baixa,
+                                        "data",
+                                        None
+                                    )
+                                    or []
+                                )
 
-                            st.success("✅ Compromisso marcado como pago.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao marcar como pago: {e}")
+                                try:
+                                    (
+                                        supabase
+                                        .table("movimentacoes")
+                                        .delete()
+                                        .eq("id", id_item)
+                                        .eq("user_id", USER_ID)
+                                        .execute()
+                                    )
+                                except Exception:
+                                    for item_baixa in dados_baixa:
+                                        if (
+                                            isinstance(item_baixa, dict)
+                                            and item_baixa.get("id")
+                                            is not None
+                                        ):
+                                            (
+                                                supabase
+                                                .table("movimentacoes")
+                                                .delete()
+                                                .eq(
+                                                    "id",
+                                                    item_baixa["id"]
+                                                )
+                                                .eq(
+                                                    "user_id",
+                                                    USER_ID
+                                                )
+                                                .execute()
+                                            )
+                                    raise
+
+                                st.session_state["feedback_agenda"] = (
+                                    "✅ Compromisso marcado como pago em "
+                                    f"{categoria_destino_item}."
+                                )
+                                st.rerun()
+
+                            except Exception as e:
+                                st.error(
+                                    "Erro ao marcar como pago: "
+                                    f"{e}"
+                                )
 
                 else:
                     col_status.caption("🟢 A Receber")
@@ -2799,10 +3009,7 @@ with aba_agenda:
                                 "valor": valor_item,
                                 "tipo": "Faturamento ou Receita (Entrada)",
                                 "descricao": f"{desc_pura} (Recebido)",
-                                "grupo_orcamentario": (
-                                    "🔴 50% Essencial "
-                                    "(Sobrevivência e Obrigações Fixas)"
-                                ),
+                                "grupo_orcamentario": "💰 RECEITAS",
                                 "subcategoria": "Renda Extra / Recebimento",
                                 "satisfacao": "3 - Indispensável",
                                 "user_id": USER_ID
@@ -2836,9 +3043,50 @@ with aba_agenda:
 
                         if serie_id_item:
                             st.caption(
-                                "Esta edição altera somente o vencimento "
-                                "selecionado, não toda a série."
+                                "Nome, valor e data alteram somente este "
+                                "vencimento. A categoria pode ser aplicada "
+                                "à série inteira."
                             )
+
+                        grupo_padrao_edicao = (
+                            grupo_destino_item
+                            if grupo_destino_item
+                            in CODIGOS_GRUPO_AGENDA
+                            else list(CODIGOS_GRUPO_AGENDA.keys())[0]
+                        )
+
+                        indice_grupo_edicao = list(
+                            CODIGOS_GRUPO_AGENDA.keys()
+                        ).index(grupo_padrao_edicao)
+
+                        grupo_edicao_agenda = st.selectbox(
+                            "Destinação Estratégica do Valor:",
+                            list(CODIGOS_GRUPO_AGENDA.keys()),
+                            index=indice_grupo_edicao,
+                            key=f"grupo_edicao_agenda_{id_item}"
+                        )
+
+                        categorias_edicao_agenda = (
+                            categorias_validas_agenda(
+                                grupo_edicao_agenda
+                            )
+                        )
+
+                        categoria_padrao_edicao = (
+                            categoria_destino_item
+                            if categoria_destino_item
+                            in categorias_edicao_agenda
+                            else categorias_edicao_agenda[0]
+                        )
+
+                        categoria_edicao_agenda = st.selectbox(
+                            "Subcategoria Correspondente:",
+                            categorias_edicao_agenda,
+                            index=categorias_edicao_agenda.index(
+                                categoria_padrao_edicao
+                            ),
+                            key=f"categoria_edicao_agenda_{id_item}"
+                        )
 
                         with st.form(f"form_editar_agenda_{id_item}"):
                             col_e1, col_e2 = st.columns([2, 1])
@@ -2865,92 +3113,214 @@ with aba_agenda:
 
                             opcoes_status = ["A Pagar", "A Receber"]
                             status_atual = (
-                                "A Pagar" if eh_conta_pagar else "A Receber"
+                                "A Pagar"
+                                if eh_conta_pagar
+                                else "A Receber"
                             )
 
                             novo_status = col_e4.selectbox(
                                 "Tipo do compromisso:",
                                 opcoes_status,
-                                index=opcoes_status.index(status_atual)
+                                index=opcoes_status.index(
+                                    status_atual
+                                )
                             )
+
+                            aplicar_categoria_serie = False
+
+                            if serie_id_item:
+                                aplicar_categoria_serie = st.checkbox(
+                                    "Aplicar esta categoria a todas as "
+                                    "parcelas/mensalidades da série",
+                                    value=False
+                                )
 
                             col_salvar, col_cancelar = st.columns(2)
 
-                            salvar_edicao = col_salvar.form_submit_button(
-                                "💾 Salvar alterações",
-                                use_container_width=True
+                            salvar_edicao = (
+                                col_salvar.form_submit_button(
+                                    "💾 Salvar alterações",
+                                    use_container_width=True
+                                )
                             )
 
-                            cancelar_edicao = col_cancelar.form_submit_button(
-                                "Cancelar",
-                                use_container_width=True
+                            cancelar_edicao = (
+                                col_cancelar.form_submit_button(
+                                    "Cancelar",
+                                    use_container_width=True
+                                )
                             )
 
                         if salvar_edicao:
-                            descricao_limpa = nova_descricao.strip()
+                            descricao_limpa = str(
+                                nova_descricao or ""
+                            ).strip()
 
                             if not descricao_limpa:
                                 st.warning(
                                     "Informe um nome para o compromisso."
                                 )
-                            elif novo_valor <= 0:
+                            elif float(novo_valor or 0) <= 0:
                                 st.warning(
                                     "O valor precisa ser maior que zero."
                                 )
                             else:
                                 if novo_status == "A Pagar":
-                                    novo_grupo = (
+                                    novo_grupo_agenda = (
                                         "📅 AGENDA: CONTAS A PAGAR"
                                     )
                                     novo_tipo = (
-                                        "📱 Saída Dinheiro / Pix (Débito)"
+                                        "📱 Saída Dinheiro / Pix "
+                                        "(Débito)"
                                     )
-                                    nova_subcategoria = "Conta Fixa"
+                                    nova_subcategoria = (
+                                        categoria_edicao_agenda
+                                    )
+                                    novos_metadados = (
+                                        definir_metadado_agenda(
+                                            texto_metadados,
+                                            "G",
+                                            CODIGOS_GRUPO_AGENDA[
+                                                grupo_edicao_agenda
+                                            ]
+                                        )
+                                    )
                                 else:
-                                    novo_grupo = (
+                                    novo_grupo_agenda = (
                                         "📅 AGENDA: CONTAS A RECEBER"
                                     )
                                     novo_tipo = (
-                                        "Faturamento ou Receita (Entrada)"
+                                        "Faturamento ou Receita "
+                                        "(Entrada)"
                                     )
                                     nova_subcategoria = (
                                         "Valores a Receber"
                                     )
+                                    novos_metadados = texto_metadados
 
                                 try:
-                                    supabase.table(
-                                        "movimentacoes"
-                                    ).update({
-                                        "data": str(nova_data),
-                                        "valor": float(novo_valor),
-                                        "tipo": novo_tipo,
-                                        "descricao": (
-                                            "[AGENDA COMPROMISSO] "
-                                            f"{descricao_limpa}"
-                                        ),
-                                        "grupo_orcamentario": novo_grupo,
-                                        "subcategoria": nova_subcategoria
-                                    }).eq(
-                                        "id", id_item
-                                    ).eq(
-                                        "user_id", USER_ID
-                                    ).execute()
+                                    (
+                                        supabase
+                                        .table("movimentacoes")
+                                        .update({
+                                            "data": str(nova_data),
+                                            "valor": float(novo_valor),
+                                            "tipo": novo_tipo,
+                                            "descricao": (
+                                                "[AGENDA COMPROMISSO] "
+                                                f"{descricao_limpa}"
+                                            ),
+                                            "grupo_orcamentario": (
+                                                novo_grupo_agenda
+                                            ),
+                                            "subcategoria": (
+                                                nova_subcategoria
+                                            ),
+                                            "satisfacao": (
+                                                novos_metadados
+                                            )
+                                        })
+                                        .eq("id", id_item)
+                                        .eq("user_id", USER_ID)
+                                        .execute()
+                                    )
+
+                                    if (
+                                        serie_id_item
+                                        and aplicar_categoria_serie
+                                        and novo_status == "A Pagar"
+                                    ):
+                                        linhas_da_serie = (
+                                            df_todos_dados[
+                                                df_todos_dados[
+                                                    "satisfacao"
+                                                ]
+                                                .fillna("")
+                                                .astype(str)
+                                                .apply(
+                                                    lambda texto: (
+                                                        extrair_metadado_agenda(
+                                                            texto,
+                                                            "S"
+                                                        )
+                                                        or
+                                                        extrair_metadado_agenda(
+                                                            texto,
+                                                            "SERIE"
+                                                        )
+                                                    )
+                                                    == serie_id_item
+                                                )
+                                            ]
+                                        )
+
+                                        for _, linha_serie in (
+                                            linhas_da_serie.iterrows()
+                                        ):
+                                            meta_linha_serie = (
+                                                definir_metadado_agenda(
+                                                    str(
+                                                        linha_serie.get(
+                                                            "satisfacao"
+                                                        )
+                                                        or ""
+                                                    ),
+                                                    "G",
+                                                    CODIGOS_GRUPO_AGENDA[
+                                                        grupo_edicao_agenda
+                                                    ]
+                                                )
+                                            )
+
+                                            (
+                                                supabase
+                                                .table(
+                                                    "movimentacoes"
+                                                )
+                                                .update({
+                                                    "subcategoria": (
+                                                        categoria_edicao_agenda
+                                                    ),
+                                                    "satisfacao": (
+                                                        meta_linha_serie
+                                                    )
+                                                })
+                                                .eq(
+                                                    "id",
+                                                    int(
+                                                        linha_serie[
+                                                            "id"
+                                                        ]
+                                                    )
+                                                )
+                                                .eq(
+                                                    "user_id",
+                                                    USER_ID
+                                                )
+                                                .execute()
+                                            )
 
                                     st.session_state[
                                         "agenda_editando_id"
                                     ] = None
-                                    st.success(
-                                        "✅ Compromisso atualizado."
+                                    st.session_state[
+                                        "feedback_agenda"
+                                    ] = (
+                                        "✅ Compromisso atualizado com "
+                                        "a categoria correta."
                                     )
                                     st.rerun()
+
                                 except Exception as e:
                                     st.error(
-                                        "Erro ao atualizar o compromisso: "
-                                        f"{e}"
+                                        "Erro ao atualizar o "
+                                        f"compromisso: {e}"
                                     )
 
                         if cancelar_edicao:
-                            st.session_state["agenda_editando_id"] = None
+                            st.session_state[
+                                "agenda_editando_id"
+                            ] = None
                             st.rerun()
 
                 # Confirmação explícita antes da exclusão definitiva.
