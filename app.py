@@ -818,6 +818,7 @@ MAPA_CATEGORIAS = {
         "Habitação (Aluguel / Financiamento)", 
         "Saúde & Medicamentos", 
         "Transporte & Combustível",
+        "Impostos & Obrigações Pessoais",
         "👶 Pensão / Filho"
     ],
     "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)": [
@@ -834,7 +835,8 @@ MAPA_CATEGORIAS = {
     "💼 Custos de Negócio (Projetos e Clínica)": [
         "Ferramentas SaaS & Softwares", 
         "Marketing & Anúncios", 
-        "Infraestrutura & Custos Operacionais"
+        "Infraestrutura & Custos Operacionais",
+        "Impostos, Taxas & Obrigações"
     ]
 }
 
