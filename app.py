@@ -90,6 +90,61 @@ def inserir_agendamentos_com_seguranca(
 
         raise
 
+
+def inserir_assinaturas_com_seguranca(
+    cliente_supabase,
+    registros,
+    user_id: str,
+    serie_id: str
+) -> int:
+    """Grava cobranças mensais uma a uma e remove a série se houver falha."""
+    ids_inseridos = []
+
+    try:
+        for registro in registros:
+            resposta = (
+                cliente_supabase
+                .table("movimentacoes")
+                .insert(registro)
+                .execute()
+            )
+
+            dados_resposta = getattr(resposta, "data", None) or []
+
+            for item in dados_resposta:
+                if isinstance(item, dict) and item.get("id") is not None:
+                    ids_inseridos.append(item["id"])
+
+        return len(registros)
+
+    except Exception:
+        for id_inserido in ids_inseridos:
+            try:
+                (
+                    cliente_supabase
+                    .table("movimentacoes")
+                    .delete()
+                    .eq("id", id_inserido)
+                    .eq("user_id", user_id)
+                    .execute()
+                )
+            except Exception:
+                pass
+
+        try:
+            (
+                cliente_supabase
+                .table("movimentacoes")
+                .delete()
+                .eq("user_id", user_id)
+                .ilike("satisfacao", f"%SUB:{serie_id}%")
+                .execute()
+            )
+        except Exception:
+            pass
+
+        raise
+
 # --- 🔐 CONEXÃO COM BANCO ---
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
@@ -575,6 +630,20 @@ def limpar_marcador_cartao(descricao: str) -> str:
     return (texto[:pos_inicio] + texto[pos_fim + 1:]).strip()
 
 
+def limpar_marcador_assinatura(descricao: str) -> str:
+    texto = str(descricao or "").strip()
+    marcador = "[ASSINATURA]"
+    posicao = texto.upper().find(marcador)
+
+    if posicao == -1:
+        return texto
+
+    return (
+        texto[:posicao]
+        + texto[posicao + len(marcador):]
+    ).strip()
+
+
 data_base_cartao = datetime.date(ano_selected, mes_selected_num, 1)
 fim_mes_cartao = ultimo_dia_do_mes(data_base_cartao)
 limite_analise_cartao = adicionar_meses(data_base_cartao, 6)
@@ -584,6 +653,9 @@ df_cartao_mes = pd.DataFrame()
 df_cartao_futuro = pd.DataFrame()
 df_fatura_por_cartao = pd.DataFrame(columns=["Cartão", "Fatura Atual", "Limite", "% do Limite"])
 df_compromisso_futuro_cartao = pd.DataFrame(columns=["Mês", "Cartão", "Valor Comprometido"])
+df_assinaturas_cartao = pd.DataFrame()
+lista_assinaturas_ativas = []
+valor_mensal_assinaturas = 0.0
 valor_fatura_cartao_mes = 0.0
 valor_cartao_futuro_total = 0.0
 
@@ -593,6 +665,7 @@ if not df_todos_dados.empty:
     df_cartao_movimentos["tipo_str"] = df_cartao_movimentos["tipo"].fillna("").astype(str)
     df_cartao_movimentos["grupo_str"] = df_cartao_movimentos["grupo_orcamentario"].fillna("").astype(str)
     df_cartao_movimentos["descricao_str"] = df_cartao_movimentos["descricao"].fillna("").astype(str)
+    df_cartao_movimentos["satisfacao_str"] = df_cartao_movimentos["satisfacao"].fillna("").astype(str)
 
     mascara_cartao = df_cartao_movimentos["tipo_str"].apply(eh_cartao)
     mascara_operacional = ~df_cartao_movimentos["grupo_str"].str.upper().str.contains("CONFIG|AGENDA", na=False)
@@ -603,7 +676,14 @@ if not df_todos_dados.empty:
     if not df_cartao_movimentos.empty:
         df_cartao_movimentos["valor"] = df_cartao_movimentos["valor"].astype(float)
         df_cartao_movimentos["Cartão"] = df_cartao_movimentos["descricao_str"].apply(extrair_cartao_da_descricao)
-        df_cartao_movimentos["Descrição Limpa"] = df_cartao_movimentos["descricao_str"].apply(limpar_marcador_cartao)
+        df_cartao_movimentos["Descrição Limpa"] = (
+            df_cartao_movimentos["descricao_str"]
+            .apply(limpar_marcador_cartao)
+            .apply(limpar_marcador_assinatura)
+        )
+        df_cartao_movimentos["Natureza"] = df_cartao_movimentos["satisfacao_str"].apply(
+            lambda texto: "Assinatura" if "SUB:" in str(texto) else "Compra"
+        )
         df_cartao_movimentos["Ano"] = pd.to_datetime(df_cartao_movimentos["data_dt"]).dt.year
         df_cartao_movimentos["Mes"] = pd.to_datetime(df_cartao_movimentos["data_dt"]).dt.month
         df_cartao_movimentos["Mês"] = pd.to_datetime(df_cartao_movimentos["data_dt"]).dt.strftime("%Y-%m")
@@ -633,6 +713,70 @@ if not df_todos_dados.empty:
         if not df_cartao_futuro.empty:
             df_compromisso_futuro_cartao = df_cartao_futuro.groupby(["Mês", "Cartão"], as_index=False)["valor"].sum()
             df_compromisso_futuro_cartao = df_compromisso_futuro_cartao.rename(columns={"valor": "Valor Comprometido"})
+
+        mascara_assinaturas = df_cartao_movimentos["satisfacao_str"].str.contains(
+            "SUB:",
+            regex=False,
+            na=False
+        )
+
+        df_assinaturas_cartao = df_cartao_movimentos[
+            mascara_assinaturas
+        ].copy()
+
+        if not df_assinaturas_cartao.empty:
+            df_assinaturas_cartao["Serie"] = df_assinaturas_cartao[
+                "satisfacao_str"
+            ].apply(
+                lambda texto: extrair_metadado_agenda(texto, "SUB")
+            )
+
+            df_assinaturas_cartao = df_assinaturas_cartao[
+                df_assinaturas_cartao["Serie"].notna()
+            ].copy()
+
+            for serie_id, grupo_serie in df_assinaturas_cartao.groupby("Serie"):
+                grupo_serie = grupo_serie.sort_values("data_dt")
+                futuras = grupo_serie[
+                    grupo_serie["data_dt"] >= hoje
+                ].copy()
+
+                if futuras.empty:
+                    continue
+
+                proxima_linha = futuras.iloc[0]
+                ultima_linha = grupo_serie.iloc[-1]
+
+                resumo = {
+                    "serie_id": str(serie_id),
+                    "nome": str(proxima_linha["Descrição Limpa"]),
+                    "cartao": str(proxima_linha["Cartão"]),
+                    "valor": float(proxima_linha["valor"]),
+                    "proxima_cobranca": proxima_linha["data_dt"],
+                    "programada_ate": ultima_linha["data_dt"],
+                    "cobrancas_futuras": int(len(futuras)),
+                    "grupo": str(
+                        proxima_linha.get("grupo_orcamentario") or ""
+                    ),
+                    "subcategoria": str(
+                        proxima_linha.get("subcategoria") or ""
+                    ),
+                }
+
+                lista_assinaturas_ativas.append(resumo)
+
+            lista_assinaturas_ativas = sorted(
+                lista_assinaturas_ativas,
+                key=lambda item: (
+                    item["proxima_cobranca"],
+                    item["nome"].lower()
+                )
+            )
+
+            valor_mensal_assinaturas = sum(
+                float(item["valor"])
+                for item in lista_assinaturas_ativas
+            )
 
 percentual_fatura_renda_v4 = (valor_fatura_cartao_mes / renda_base_usuario) if renda_base_usuario > 0 else 0.0
 limite_total_cartoes = sum(float(cartao.get("limite") or 0.0) for cartao in lista_cartoes_cadastrados)
@@ -934,7 +1078,17 @@ with aba_fluxo_futuro:
 # ==================== ABA 2 (CARTÕES & FATURAS) ====================
 with aba_cartoes:
     st.title("💳 Cartões & Faturas")
-    st.caption("Controle separado para limite, fatura atual, compras parceladas e meses futuros já comprometidos.")
+    st.caption(
+        "Controle separado para limite, fatura atual, compras parceladas, "
+        "assinaturas mensais e meses futuros já comprometidos."
+    )
+
+    feedback_assinatura = st.session_state.pop(
+        "feedback_assinatura",
+        None
+    )
+    if feedback_assinatura:
+        st.success(feedback_assinatura)
 
     col_card1, col_card2, col_card3, col_card4 = st.columns(4)
     col_card1.metric("Fatura do mês", f"R$ {valor_fatura_cartao_mes:,.2f}")
@@ -1013,6 +1167,426 @@ with aba_cartoes:
         st.write("Nenhum cartão cadastrado ainda.")
 
     st.markdown("---")
+    st.subheader("🔁 Assinaturas recorrentes no cartão")
+    st.caption(
+        "Use esta área para ChatGPT, Gemini, Netflix, Spotify, internet "
+        "e outras cobranças que se repetem mensalmente. Assinatura não é "
+        "parcelamento: ela pode ser cancelada e o valor pode mudar."
+    )
+
+    col_ass_metric1, col_ass_metric2 = st.columns(2)
+    col_ass_metric1.metric(
+        "Assinaturas ativas",
+        len(lista_assinaturas_ativas)
+    )
+    col_ass_metric2.metric(
+        "Compromisso mensal estimado",
+        f"R$ {valor_mensal_assinaturas:,.2f}"
+    )
+
+    if not lista_cartoes_cadastrados:
+        st.warning(
+            "Cadastre um cartão antes de criar uma assinatura recorrente."
+        )
+    else:
+        grupos_permitidos_assinatura = [
+            nome_grupo
+            for nome_grupo in MAPA_CATEGORIAS.keys()
+            if "APORTE" not in nome_grupo.upper()
+            and "QUITAÇÃO" not in nome_grupo.upper()
+        ]
+
+        col_pre_ass1, col_pre_ass2, col_pre_ass3 = st.columns(3)
+
+        cartao_assinatura = col_pre_ass1.selectbox(
+            "Cartão da assinatura:",
+            [cartao["nome"] for cartao in lista_cartoes_cadastrados],
+            key="cartao_nova_assinatura"
+        )
+
+        grupo_assinatura = col_pre_ass2.selectbox(
+            "Grupo orçamentário:",
+            grupos_permitidos_assinatura,
+            key="grupo_nova_assinatura"
+        )
+
+        categoria_assinatura = col_pre_ass3.selectbox(
+            "Categoria:",
+            MAPA_CATEGORIAS[grupo_assinatura],
+            key="categoria_nova_assinatura"
+        )
+
+        with st.form(
+            "form_nova_assinatura_cartao",
+            clear_on_submit=True
+        ):
+            col_form_ass1, col_form_ass2 = st.columns(2)
+
+            nome_assinatura = col_form_ass1.text_input(
+                "Nome da assinatura:",
+                placeholder="Ex.: ChatGPT, Gemini, Netflix"
+            )
+
+            valor_assinatura = col_form_ass2.number_input(
+                "Valor mensal (R$):",
+                min_value=0.0,
+                step=0.01,
+                format="%.2f"
+            )
+
+            col_form_ass3, col_form_ass4 = st.columns(2)
+
+            primeira_cobranca_assinatura = col_form_ass3.date_input(
+                "Data da primeira cobrança:",
+                value=hoje
+            )
+
+            meses_assinatura = col_form_ass4.number_input(
+                "Programar por quantos meses?",
+                min_value=2,
+                max_value=36,
+                value=12,
+                step=1,
+                help=(
+                    "A assinatura continua conceitualmente ativa, mas o app "
+                    "programa um período controlado para evitar registros "
+                    "infinitos. Depois você pode renovar."
+                )
+            )
+
+            salvar_assinatura = st.form_submit_button(
+                "Cadastrar assinatura mensal",
+                use_container_width=True
+            )
+
+        if salvar_assinatura:
+            nome_assinatura_limpo = str(
+                nome_assinatura or ""
+            ).strip()
+
+            duplicada = any(
+                item["nome"].strip().lower()
+                == nome_assinatura_limpo.lower()
+                and item["cartao"].strip().lower()
+                == str(cartao_assinatura).strip().lower()
+                for item in lista_assinaturas_ativas
+            )
+
+            if not nome_assinatura_limpo:
+                st.warning("Informe o nome da assinatura.")
+            elif float(valor_assinatura or 0) <= 0:
+                st.warning("Informe um valor mensal maior que zero.")
+            elif duplicada:
+                st.warning(
+                    "Já existe uma assinatura ativa com esse nome nesse "
+                    "cartão. Edite a assinatura existente para evitar "
+                    "cobrança duplicada."
+                )
+            else:
+                serie_assinatura = uuid.uuid4().hex[:10]
+                registros_assinatura = []
+
+                for indice in range(int(meses_assinatura)):
+                    data_cobranca = adicionar_meses(
+                        primeira_cobranca_assinatura,
+                        indice
+                    )
+
+                    registros_assinatura.append({
+                        "data": str(data_cobranca),
+                        "valor": float(valor_assinatura),
+                        "tipo": "💳 Saída Cartão de Crédito",
+                        "descricao": (
+                            f"[CARTAO: {cartao_assinatura}] "
+                            f"[ASSINATURA] {nome_assinatura_limpo}"
+                        ),
+                        "grupo_orcamentario": grupo_assinatura,
+                        "subcategoria": categoria_assinatura,
+                        "satisfacao": f"2|SUB:{serie_assinatura}",
+                        "user_id": USER_ID
+                    })
+
+                salvou_assinatura = False
+
+                try:
+                    quantidade_criada = (
+                        inserir_assinaturas_com_seguranca(
+                            supabase,
+                            registros_assinatura,
+                            USER_ID,
+                            serie_assinatura
+                        )
+                    )
+
+                    st.session_state["feedback_assinatura"] = (
+                        f"✅ Assinatura cadastrada e programada por "
+                        f"{quantidade_criada} meses."
+                    )
+                    salvou_assinatura = True
+
+                except Exception as e:
+                    st.error(
+                        "Não foi possível cadastrar a assinatura. "
+                        "O sistema tentou remover qualquer cobrança criada "
+                        "parcialmente."
+                    )
+                    st.exception(e)
+
+                if salvou_assinatura:
+                    st.rerun()
+
+    if "assinatura_editando_id" not in st.session_state:
+        st.session_state["assinatura_editando_id"] = None
+
+    if "assinatura_cancelando_id" not in st.session_state:
+        st.session_state["assinatura_cancelando_id"] = None
+
+    if lista_assinaturas_ativas:
+        st.markdown("#### Assinaturas ativas")
+
+        for assinatura in lista_assinaturas_ativas:
+            serie_id = assinatura["serie_id"]
+
+            with st.container(border=True):
+                col_ass1, col_ass2, col_ass3, col_ass4 = st.columns(
+                    [3.2, 2.2, 1.8, 2.2]
+                )
+
+                col_ass1.markdown(f"**{assinatura['nome']}**")
+                col_ass1.caption(assinatura["cartao"])
+
+                col_ass2.markdown(
+                    f"**R$ {assinatura['valor']:,.2f}/mês**"
+                )
+                col_ass2.caption(assinatura["subcategoria"])
+
+                col_ass3.caption("Próxima")
+                col_ass3.markdown(
+                    f"**{assinatura['proxima_cobranca'].strftime('%d/%m/%Y')}**"
+                )
+
+                col_ass4.caption("Programada até")
+                col_ass4.markdown(
+                    f"**{assinatura['programada_ate'].strftime('%d/%m/%Y')}**"
+                )
+
+                st.caption(
+                    f"{assinatura['cobrancas_futuras']} cobrança(s) "
+                    "programada(s), incluindo a próxima."
+                )
+
+                col_acao_ass1, col_acao_ass2 = st.columns(2)
+
+                if col_acao_ass1.button(
+                    "✏️ Editar cobranças futuras",
+                    key=f"editar_assinatura_{serie_id}",
+                    use_container_width=True
+                ):
+                    st.session_state[
+                        "assinatura_editando_id"
+                    ] = serie_id
+                    st.session_state[
+                        "assinatura_cancelando_id"
+                    ] = None
+
+                if col_acao_ass2.button(
+                    "⛔ Cancelar cobranças futuras",
+                    key=f"cancelar_assinatura_{serie_id}",
+                    use_container_width=True
+                ):
+                    st.session_state[
+                        "assinatura_cancelando_id"
+                    ] = serie_id
+                    st.session_state[
+                        "assinatura_editando_id"
+                    ] = None
+
+                if (
+                    st.session_state["assinatura_editando_id"]
+                    == serie_id
+                ):
+                    st.markdown("##### Editar próximas cobranças")
+
+                    opcoes_cartao_edicao = [
+                        cartao["nome"]
+                        for cartao in lista_cartoes_cadastrados
+                    ]
+
+                    indice_cartao_atual = (
+                        opcoes_cartao_edicao.index(
+                            assinatura["cartao"]
+                        )
+                        if assinatura["cartao"]
+                        in opcoes_cartao_edicao
+                        else 0
+                    )
+
+                    with st.form(
+                        f"form_editar_assinatura_{serie_id}"
+                    ):
+                        col_edit_ass1, col_edit_ass2 = st.columns(2)
+
+                        novo_nome_assinatura = col_edit_ass1.text_input(
+                            "Nome:",
+                            value=assinatura["nome"]
+                        )
+
+                        novo_valor_assinatura = col_edit_ass2.number_input(
+                            "Novo valor mensal (R$):",
+                            min_value=0.01,
+                            value=float(assinatura["valor"]),
+                            step=0.01,
+                            format="%.2f"
+                        )
+
+                        novo_cartao_assinatura = st.selectbox(
+                            "Cartão:",
+                            opcoes_cartao_edicao,
+                            index=indice_cartao_atual,
+                            key=f"novo_cartao_assinatura_{serie_id}"
+                        )
+
+                        col_salvar_ass, col_cancelar_edit_ass = st.columns(2)
+
+                        salvar_edicao_assinatura = (
+                            col_salvar_ass.form_submit_button(
+                                "Salvar alterações",
+                                use_container_width=True
+                            )
+                        )
+
+                        cancelar_edicao_assinatura = (
+                            col_cancelar_edit_ass.form_submit_button(
+                                "Fechar edição",
+                                use_container_width=True
+                            )
+                        )
+
+                    if salvar_edicao_assinatura:
+                        nome_editado = str(
+                            novo_nome_assinatura or ""
+                        ).strip()
+
+                        if not nome_editado:
+                            st.warning(
+                                "Informe o nome da assinatura."
+                            )
+                        elif float(novo_valor_assinatura) <= 0:
+                            st.warning(
+                                "O valor precisa ser maior que zero."
+                            )
+                        else:
+                            try:
+                                (
+                                    supabase
+                                    .table("movimentacoes")
+                                    .update({
+                                        "valor": float(
+                                            novo_valor_assinatura
+                                        ),
+                                        "descricao": (
+                                            f"[CARTAO: "
+                                            f"{novo_cartao_assinatura}] "
+                                            f"[ASSINATURA] {nome_editado}"
+                                        )
+                                    })
+                                    .eq("user_id", USER_ID)
+                                    .ilike(
+                                        "satisfacao",
+                                        f"%SUB:{serie_id}%"
+                                    )
+                                    .gte("data", str(hoje))
+                                    .execute()
+                                )
+
+                                st.session_state[
+                                    "assinatura_editando_id"
+                                ] = None
+                                st.session_state[
+                                    "feedback_assinatura"
+                                ] = (
+                                    "✅ Próximas cobranças da assinatura "
+                                    "foram atualizadas."
+                                )
+                                st.rerun()
+
+                            except Exception as e:
+                                st.error(
+                                    "Erro ao atualizar a assinatura: "
+                                    f"{e}"
+                                )
+
+                    if cancelar_edicao_assinatura:
+                        st.session_state[
+                            "assinatura_editando_id"
+                        ] = None
+                        st.rerun()
+
+                if (
+                    st.session_state["assinatura_cancelando_id"]
+                    == serie_id
+                ):
+                    st.warning(
+                        "Isso excluirá somente as cobranças de hoje em "
+                        "diante. As cobranças passadas continuarão no "
+                        "histórico das faturas."
+                    )
+
+                    col_confirmar_cancel, col_fechar_cancel = st.columns(2)
+
+                    if col_confirmar_cancel.button(
+                        "Confirmar cancelamento",
+                        key=f"confirmar_cancel_ass_{serie_id}",
+                        type="primary",
+                        use_container_width=True
+                    ):
+                        try:
+                            (
+                                supabase
+                                .table("movimentacoes")
+                                .delete()
+                                .eq("user_id", USER_ID)
+                                .ilike(
+                                    "satisfacao",
+                                    f"%SUB:{serie_id}%"
+                                )
+                                .gte("data", str(hoje))
+                                .execute()
+                            )
+
+                            st.session_state[
+                                "assinatura_cancelando_id"
+                            ] = None
+                            st.session_state[
+                                "feedback_assinatura"
+                            ] = (
+                                "✅ Assinatura cancelada. O histórico "
+                                "anterior foi preservado."
+                            )
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(
+                                "Erro ao cancelar a assinatura: "
+                                f"{e}"
+                            )
+
+                    if col_fechar_cancel.button(
+                        "Não cancelar",
+                        key=f"fechar_cancel_ass_{serie_id}",
+                        use_container_width=True
+                    ):
+                        st.session_state[
+                            "assinatura_cancelando_id"
+                        ] = None
+                        st.rerun()
+
+    else:
+        st.info(
+            "Nenhuma assinatura mensal ativa foi cadastrada."
+        )
+
+    st.markdown("---")
     st.subheader(f"📊 Fatura por cartão - {lista_meses[mes_selected_num]}/{ano_selected}")
 
     if df_fatura_por_cartao.empty:
@@ -1033,8 +1607,26 @@ with aba_cartoes:
     if df_cartao_mes.empty:
         st.info("Nenhuma compra no cartão encontrada para este mês.")
     else:
-        df_compras_mes = df_cartao_mes[["data", "Descrição Limpa", "Cartão", "grupo_orcamentario", "subcategoria", "valor"]].copy()
-        df_compras_mes.columns = ["Data", "Descrição", "Cartão", "Grupo", "Subcategoria", "Valor"]
+        df_compras_mes = df_cartao_mes[
+            [
+                "data",
+                "Descrição Limpa",
+                "Natureza",
+                "Cartão",
+                "grupo_orcamentario",
+                "subcategoria",
+                "valor"
+            ]
+        ].copy()
+        df_compras_mes.columns = [
+            "Data",
+            "Descrição",
+            "Tipo",
+            "Cartão",
+            "Grupo",
+            "Subcategoria",
+            "Valor"
+        ]
         df_compras_mes = df_compras_mes.sort_values(by="Data")
         df_compras_mes["Valor"] = df_compras_mes["Valor"].map(lambda v: f"R$ {v:,.2f}")
         st.dataframe(df_compras_mes, use_container_width=True, hide_index=True)
@@ -1137,6 +1729,11 @@ with aba_painel:
 
         opcoes_cartao_lancamento = ["Cartão não identificado"] + [cartao["nome"] for cartao in lista_cartoes_cadastrados]
         cartao_lancamento = st.selectbox("Qual cartão foi usado?", opcoes_cartao_lancamento)
+        st.caption(
+            "Para ChatGPT, Gemini, Netflix e outras cobranças mensais, "
+            "use 'Assinaturas recorrentes' na aba Cartões & Faturas. "
+            "Não marque como compra parcelada."
+        )
 
     with st.form("formulario_envio_blindado", clear_on_submit=True):
         valor = st.number_input("Qual o valor total da operação? (R$)", min_value=0.0, step=0.01, format="%.2f") if not is_parcelado else st.number_input("Qual o valor de CADA PARCELA? (R$)", min_value=0.0, step=0.01, format="%.2f")
