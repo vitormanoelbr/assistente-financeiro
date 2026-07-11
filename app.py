@@ -1793,43 +1793,470 @@ with aba_painel:
     # --- 📋 SEÇÃO DE LANÇAMENTOS ---
     st.markdown("---")
     st.subheader("📋 Gerenciar Lançamentos do Período")
-    
+    st.caption(
+        "Edite os campos diretamente na tabela. Para apagar um lançamento, "
+        "marque a coluna 'Excluir?' e use o botão de exclusão."
+    )
+
+    feedback_lancamentos = st.session_state.pop(
+        "feedback_lancamentos",
+        None
+    )
+    if feedback_lancamentos:
+        st.success(feedback_lancamentos)
+
+    if "lancamentos_excluir_ids" not in st.session_state:
+        st.session_state["lancamentos_excluir_ids"] = []
+
     if supabase and not df_filtrado.empty:
-        df_editor = df_filtrado[["id", "data", "descricao", "grupo_orcamentario", "subcategoria", "valor", "tipo"]].copy()
-        df_editor.columns = ["ID", "Data", "Descrição", "Grupo", "Subcategoria", "Valor (R$)", "Meio / Tipo"]
-        
+        df_editor = df_filtrado[
+            [
+                "id",
+                "data",
+                "descricao",
+                "grupo_orcamentario",
+                "subcategoria",
+                "valor",
+                "tipo"
+            ]
+        ].copy()
+
+        df_editor.columns = [
+            "ID",
+            "Data",
+            "Descrição",
+            "Grupo",
+            "Subcategoria",
+            "Valor (R$)",
+            "Meio / Tipo"
+        ]
+
+        df_editor["Data"] = pd.to_datetime(
+            df_editor["Data"],
+            errors="coerce"
+        ).dt.date
+
+        for coluna_texto in [
+            "Descrição",
+            "Grupo",
+            "Subcategoria",
+            "Meio / Tipo"
+        ]:
+            df_editor[coluna_texto] = (
+                df_editor[coluna_texto]
+                .fillna("")
+                .astype(str)
+            )
+
+        df_editor["Valor (R$)"] = pd.to_numeric(
+            df_editor["Valor (R$)"],
+            errors="coerce"
+        ).fillna(0.0)
+
+        df_editor["Excluir?"] = False
+
+        grupos_editor = sorted(
+            set(MAPA_CATEGORIAS.keys())
+            | set(
+                df_editor["Grupo"]
+                .dropna()
+                .astype(str)
+                .tolist()
+            )
+        )
+
+        subcategorias_editor = sorted(
+            {
+                str(subcategoria)
+                for lista_subcategorias in MAPA_CATEGORIAS.values()
+                for subcategoria in lista_subcategorias
+                if "CRIAR NOVA META" not in str(subcategoria).upper()
+            }
+            | set(
+                df_editor["Subcategoria"]
+                .dropna()
+                .astype(str)
+                .tolist()
+            )
+        )
+
+        meios_padrao = {
+            "📱 Saída Dinheiro / Pix (Débito)",
+            "💳 Saída Cartão de Crédito",
+            "Faturamento ou Receita (Entrada)",
+            "Gasto ou Investimento (Saída)"
+        }
+
+        meios_editor = sorted(
+            meios_padrao
+            | set(
+                df_editor["Meio / Tipo"]
+                .dropna()
+                .astype(str)
+                .tolist()
+            )
+        )
+
         dados_editados = st.data_editor(
             data=df_editor,
             use_container_width=True,
             hide_index=True,
-            disabled=["ID", "Grupo", "Subcategoria"],
-            num_rows="fixed"
+            num_rows="fixed",
+            disabled=["ID"],
+            key="editor_lancamentos_periodo",
+            column_config={
+                "ID": st.column_config.NumberColumn(
+                    "ID",
+                    help="Identificador interno do lançamento.",
+                    format="%d"
+                ),
+                "Data": st.column_config.DateColumn(
+                    "Data",
+                    format="DD/MM/YYYY"
+                ),
+                "Descrição": st.column_config.TextColumn(
+                    "Descrição",
+                    help="Nome do estabelecimento, conta ou movimentação."
+                ),
+                "Grupo": st.column_config.SelectboxColumn(
+                    "Grupo",
+                    options=grupos_editor
+                ),
+                "Subcategoria": st.column_config.SelectboxColumn(
+                    "Subcategoria",
+                    options=subcategorias_editor
+                ),
+                "Valor (R$)": st.column_config.NumberColumn(
+                    "Valor (R$)",
+                    min_value=0.01,
+                    step=0.01,
+                    format="R$ %.2f"
+                ),
+                "Meio / Tipo": st.column_config.SelectboxColumn(
+                    "Meio / Tipo",
+                    options=meios_editor
+                ),
+                "Excluir?": st.column_config.CheckboxColumn(
+                    "Excluir?",
+                    help=(
+                        "Marque somente os lançamentos que deseja apagar."
+                    ),
+                    default=False
+                )
+            }
         )
-        
-        if st.button("💾 Salvar Alterações da Tabela"):
-            try:
-                linhas_atuais_ids = set(dados_editados["ID"].dropna().astype(int).tolist())
-                linhas_originais_ids = set(df_editor["ID"].astype(int).tolist())
-                
-                for id_del in (linhas_originais_ids - linhas_atuais_ids):
-                    supabase.table("movimentacoes").delete().eq("id", id_del).eq("user_id", USER_ID).execute()
-                    
-                for _, row in dados_editados.iterrows():
-                    if pd.notna(row["ID"]):
-                        row_id = int(row["ID"])
-                        supabase.table("movimentacoes").update({
-                            "descricao": str(row["Descrição"]),
-                            "valor": float(row["Valor (R$)"]),
-                            "tipo": str(row["Meio / Tipo"]),
-                            "data": str(row["Data"])
-                        }).eq("id", row_id).eq("user_id", USER_ID).execute()
-                        
-                st.success("🔄 Alterações guardadas com total estabilidade!")
+
+        col_salvar_tabela, col_excluir_tabela = st.columns(2)
+
+        salvar_edicoes = col_salvar_tabela.button(
+            "💾 Salvar edições",
+            use_container_width=True,
+            key="salvar_edicoes_lancamentos"
+        )
+
+        solicitar_exclusao = col_excluir_tabela.button(
+            "🗑️ Excluir selecionados",
+            use_container_width=True,
+            key="solicitar_exclusao_lancamentos"
+        )
+
+        if salvar_edicoes:
+            erros_validacao = []
+            atualizacoes = []
+
+            originais_por_id = (
+                df_editor
+                .drop(columns=["Excluir?"])
+                .set_index("ID")
+            )
+
+            linhas_para_salvar = dados_editados[
+                ~dados_editados["Excluir?"].fillna(False)
+            ].copy()
+
+            for _, row in linhas_para_salvar.iterrows():
+                if pd.isna(row["ID"]):
+                    continue
+
+                row_id = int(row["ID"])
+                descricao_nova = str(
+                    row["Descrição"] or ""
+                ).strip()
+                grupo_novo = str(
+                    row["Grupo"] or ""
+                ).strip()
+                subcategoria_nova = str(
+                    row["Subcategoria"] or ""
+                ).strip()
+                meio_novo = str(
+                    row["Meio / Tipo"] or ""
+                ).strip()
+
+                valor_novo = pd.to_numeric(
+                    row["Valor (R$)"],
+                    errors="coerce"
+                )
+
+                data_nova_convertida = pd.to_datetime(
+                    row["Data"],
+                    errors="coerce"
+                )
+
+                if not descricao_nova:
+                    erros_validacao.append(
+                        f"ID {row_id}: a descrição não pode ficar vazia."
+                    )
+                    continue
+
+                if pd.isna(valor_novo) or float(valor_novo) <= 0:
+                    erros_validacao.append(
+                        f"ID {row_id}: o valor precisa ser maior que zero."
+                    )
+                    continue
+
+                if pd.isna(data_nova_convertida):
+                    erros_validacao.append(
+                        f"ID {row_id}: informe uma data válida."
+                    )
+                    continue
+
+                if not grupo_novo:
+                    erros_validacao.append(
+                        f"ID {row_id}: selecione um grupo."
+                    )
+                    continue
+
+                if not subcategoria_nova:
+                    erros_validacao.append(
+                        f"ID {row_id}: selecione uma subcategoria."
+                    )
+                    continue
+
+                if not meio_novo:
+                    erros_validacao.append(
+                        f"ID {row_id}: selecione o meio ou tipo."
+                    )
+                    continue
+
+                original = originais_por_id.loc[row_id]
+
+                grupo_original = str(
+                    original["Grupo"] or ""
+                ).strip()
+                subcategoria_original = str(
+                    original["Subcategoria"] or ""
+                ).strip()
+
+                categoria_foi_alterada = (
+                    grupo_novo != grupo_original
+                    or subcategoria_nova != subcategoria_original
+                )
+
+                if (
+                    categoria_foi_alterada
+                    and grupo_novo in MAPA_CATEGORIAS
+                    and subcategoria_nova
+                    not in MAPA_CATEGORIAS[grupo_novo]
+                ):
+                    erros_validacao.append(
+                        f"ID {row_id}: a subcategoria "
+                        f"'{subcategoria_nova}' não pertence ao grupo "
+                        f"selecionado."
+                    )
+                    continue
+
+                data_nova = (
+                    data_nova_convertida
+                    .date()
+                    .isoformat()
+                )
+
+                data_original_convertida = pd.to_datetime(
+                    original["Data"],
+                    errors="coerce"
+                )
+
+                data_original = (
+                    data_original_convertida.date().isoformat()
+                    if not pd.isna(data_original_convertida)
+                    else ""
+                )
+
+                payload = {
+                    "data": data_nova,
+                    "descricao": descricao_nova,
+                    "grupo_orcamentario": grupo_novo,
+                    "subcategoria": subcategoria_nova,
+                    "valor": float(valor_novo),
+                    "tipo": meio_novo
+                }
+
+                houve_alteracao = any([
+                    data_nova != data_original,
+                    descricao_nova
+                    != str(original["Descrição"] or "").strip(),
+                    grupo_novo != grupo_original,
+                    subcategoria_nova != subcategoria_original,
+                    abs(
+                        float(valor_novo)
+                        - float(original["Valor (R$)"])
+                    ) > 0.000001,
+                    meio_novo
+                    != str(original["Meio / Tipo"] or "").strip()
+                ])
+
+                if houve_alteracao:
+                    atualizacoes.append((row_id, payload))
+
+            if erros_validacao:
+                st.error(
+                    "Existem campos que precisam ser corrigidos antes "
+                    "de salvar:"
+                )
+                for erro in erros_validacao:
+                    st.write(f"- {erro}")
+            elif not atualizacoes:
+                st.info("Nenhuma alteração foi identificada.")
+            else:
+                salvou_edicoes = False
+
+                try:
+                    for row_id, payload in atualizacoes:
+                        (
+                            supabase
+                            .table("movimentacoes")
+                            .update(payload)
+                            .eq("id", row_id)
+                            .eq("user_id", USER_ID)
+                            .execute()
+                        )
+
+                    st.session_state["feedback_lancamentos"] = (
+                        f"✅ {len(atualizacoes)} lançamento(s) "
+                        "atualizado(s)."
+                    )
+                    salvou_edicoes = True
+
+                except Exception as e:
+                    st.error(
+                        "Não foi possível salvar todas as alterações."
+                    )
+                    st.exception(e)
+
+                if salvou_edicoes:
+                    st.rerun()
+
+        if solicitar_exclusao:
+            ids_selecionados = (
+                dados_editados.loc[
+                    dados_editados["Excluir?"].fillna(False),
+                    "ID"
+                ]
+                .dropna()
+                .astype(int)
+                .tolist()
+            )
+
+            if not ids_selecionados:
+                st.warning(
+                    "Marque pelo menos um lançamento na coluna "
+                    "'Excluir?'."
+                )
+            else:
+                st.session_state[
+                    "lancamentos_excluir_ids"
+                ] = ids_selecionados
                 st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao processar lote de atualizações: {e}")
+
+        ids_pendentes_exclusao = st.session_state.get(
+            "lancamentos_excluir_ids",
+            []
+        )
+
+        if ids_pendentes_exclusao:
+            linhas_pendentes = df_editor[
+                df_editor["ID"].isin(ids_pendentes_exclusao)
+            ]
+
+            with st.container(border=True):
+                st.warning(
+                    "Confirme a exclusão definitiva dos lançamentos "
+                    "selecionados."
+                )
+
+                for _, linha in linhas_pendentes.iterrows():
+                    st.write(
+                        f"- {linha['Data']} - "
+                        f"{linha['Descrição']} - "
+                        f"R$ {float(linha['Valor (R$)']):,.2f}"
+                    )
+
+                col_confirmar_exclusao, col_cancelar_exclusao = (
+                    st.columns(2)
+                )
+
+                confirmar_exclusao = (
+                    col_confirmar_exclusao.button(
+                        "Sim, excluir definitivamente",
+                        type="primary",
+                        use_container_width=True,
+                        key="confirmar_exclusao_lancamentos"
+                    )
+                )
+
+                cancelar_exclusao = (
+                    col_cancelar_exclusao.button(
+                        "Cancelar",
+                        use_container_width=True,
+                        key="cancelar_exclusao_lancamentos"
+                    )
+                )
+
+                if confirmar_exclusao:
+                    exclusao_concluida = False
+
+                    try:
+                        for row_id in ids_pendentes_exclusao:
+                            (
+                                supabase
+                                .table("movimentacoes")
+                                .delete()
+                                .eq("id", int(row_id))
+                                .eq("user_id", USER_ID)
+                                .execute()
+                            )
+
+                        st.session_state[
+                            "lancamentos_excluir_ids"
+                        ] = []
+                        st.session_state[
+                            "feedback_lancamentos"
+                        ] = (
+                            f"🗑️ {len(ids_pendentes_exclusao)} "
+                            "lançamento(s) excluído(s)."
+                        )
+                        exclusao_concluida = True
+
+                    except Exception as e:
+                        st.error(
+                            "Não foi possível excluir os lançamentos."
+                        )
+                        st.exception(e)
+
+                    if exclusao_concluida:
+                        st.rerun()
+
+                if cancelar_exclusao:
+                    st.session_state[
+                        "lancamentos_excluir_ids"
+                    ] = []
+                    st.rerun()
+
     else:
-        st.info("Nenhum lançamento efetuado ou encontrado para os filtros selecionados.")
+        st.info(
+            "Nenhum lançamento efetuado ou encontrado para os filtros "
+            "selecionados."
+        )
 
 # ==================== ABA 2 (PORQUINHOS) ====================
 with aba_porquinhos:
