@@ -819,6 +819,75 @@ def cadastrar_compromisso_http(
 
     return payload
 
+
+def atualizar_compromisso_http(
+    compromisso_id,
+    user_id: str,
+    descricao: str,
+    natureza: str,
+    data_compromisso: datetime.date,
+    valor: float,
+    categoria: str,
+) -> dict:
+    """Atualiza um compromisso da Agenda via REST HTTP."""
+    url = f"{SUPABASE_URL}/rest/v1/movimentacoes"
+
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {st.session_state['user_token']}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+    if natureza.strip() == "A receber":
+        grupo = "AGENDA - A RECEBER"
+        tipo = "Entrada"
+    else:
+        grupo = "AGENDA - A PAGAR"
+        tipo = "Saída"
+
+    payload = {
+        "data": data_compromisso.isoformat(),
+        "descricao": f"[AGENDA COMPROMISSO] {descricao.strip()}",
+        "grupo_orcamentario": grupo,
+        "subcategoria": categoria.strip(),
+        "valor": float(valor),
+        "satisfacao": "3 - Indispensável",
+        "tipo": tipo,
+    }
+
+    parametros = [
+        ("id", f"eq.{compromisso_id}"),
+        ("user_id", f"eq.{user_id}"),
+    ]
+
+    with httpx.Client(timeout=20.0) as cliente:
+        resposta = cliente.patch(
+            url,
+            headers=headers,
+            params=parametros,
+            json=payload,
+        )
+
+    if resposta.status_code not in (200, 204):
+        detalhe = resposta.text[:500]
+        raise RuntimeError(
+            f"Edição retornou HTTP {resposta.status_code}: {detalhe}"
+        )
+
+    if resposta.status_code == 204 or not resposta.text.strip():
+        return payload
+
+    dados = resposta.json()
+
+    if isinstance(dados, list) and dados:
+        return dados[0]
+
+    if isinstance(dados, dict):
+        return dados
+
+    return payload
+
 def limpar_descricao_agenda(texto) -> str:
     return str(texto or "").replace(
         "[AGENDA COMPROMISSO] ",
@@ -1347,12 +1416,157 @@ elif pagina_teste == "Agenda":
                 },
             )
 
+            st.markdown("---")
+            st.subheader("Editar compromisso")
+
+            opcoes_edicao = {}
+
+            for _, linha in df_agenda_valida.iterrows():
+                identificador = linha.get("id")
+                data_texto = linha["data_dt"].strftime("%d/%m/%Y")
+                descricao_texto = linha["Compromisso"]
+                valor_texto = float(linha["valor_num"])
+
+                rotulo = (
+                    f"{data_texto} - {descricao_texto} - "
+                    f"R$ {valor_texto:,.2f}"
+                )
+
+                # Evita colisão caso existam compromissos idênticos.
+                if rotulo in opcoes_edicao:
+                    rotulo = f"{rotulo} - ID {identificador}"
+
+                opcoes_edicao[rotulo] = identificador
+
+            rotulo_escolhido = st.selectbox(
+                "Escolha o compromisso:",
+                list(opcoes_edicao.keys()),
+                key="agenda_editar_selecao",
+            )
+
+            id_escolhido = opcoes_edicao[rotulo_escolhido]
+
+            registro_edicao = df_agenda_valida[
+                df_agenda_valida["id"] == id_escolhido
+            ].iloc[0]
+
+            descricao_atual = str(
+                registro_edicao["Compromisso"] or ""
+            )
+            natureza_atual = str(
+                registro_edicao["Natureza"] or "A pagar"
+            )
+            categoria_atual = str(
+                registro_edicao["subcategoria"] or ""
+            )
+            valor_atual = float(
+                registro_edicao["valor_num"]
+            )
+            data_atual = registro_edicao["data_dt"].date()
+
+            with st.form("form_editar_agenda"):
+                col_edit1, col_edit2 = st.columns(2)
+
+                with col_edit1:
+                    natureza_editada = st.selectbox(
+                        "Natureza:",
+                        ["A pagar", "A receber"],
+                        index=(
+                            1 if natureza_atual == "A receber" else 0
+                        ),
+                        key="agenda_editar_natureza",
+                    )
+
+                    descricao_editada = st.text_input(
+                        "Compromisso:",
+                        value=descricao_atual,
+                        key="agenda_editar_descricao",
+                    )
+
+                    categoria_editada = st.text_input(
+                        "Categoria:",
+                        value=categoria_atual,
+                        key="agenda_editar_categoria",
+                    )
+
+                with col_edit2:
+                    data_editada = st.date_input(
+                        "Data do compromisso:",
+                        value=data_atual,
+                        key="agenda_editar_data",
+                    )
+
+                    valor_editado = st.number_input(
+                        "Valor (R$):",
+                        min_value=0.0,
+                        value=valor_atual,
+                        step=10.0,
+                        format="%.2f",
+                        key="agenda_editar_valor",
+                    )
+
+                salvar_edicao = st.form_submit_button(
+                    "Salvar alterações",
+                    width="stretch",
+                )
+
+            if salvar_edicao:
+                erros_edicao = []
+
+                if not descricao_editada.strip():
+                    erros_edicao.append(
+                        "Informe a descrição do compromisso."
+                    )
+
+                if not categoria_editada.strip():
+                    erros_edicao.append(
+                        "Informe uma categoria."
+                    )
+
+                if float(valor_editado) <= 0:
+                    erros_edicao.append(
+                        "Informe um valor maior que zero."
+                    )
+
+                if erros_edicao:
+                    for mensagem_erro in erros_edicao:
+                        st.error(mensagem_erro)
+                else:
+                    try:
+                        atualizar_compromisso_http(
+                            id_escolhido,
+                            USER_ID,
+                            descricao_editada,
+                            natureza_editada,
+                            data_editada,
+                            float(valor_editado),
+                            categoria_editada,
+                        )
+                        st.success(
+                            "Compromisso atualizado com sucesso."
+                        )
+                        st.rerun()
+
+                    except httpx.TimeoutException:
+                        st.error(
+                            "A edição ultrapassou 20 segundos."
+                        )
+                    except httpx.RequestError as erro:
+                        st.error(
+                            f"Falha de conexão ao editar: {erro}"
+                        )
+                    except Exception as erro:
+                        st.error(
+                            "Falha ao editar o compromisso: "
+                            f"{type(erro).__name__}: {erro}"
+                        )
+
         with st.expander("Ver informações do teste da Agenda"):
             st.write(
                 f"Registros retornados: {len(compromissos)}"
             )
             st.write(
-                "Modo atual: leitura e cadastro."
+                "Modo atual: leitura, cadastro e edição."
             )
             st.write(
                 "Limite de segurança: 500 compromissos."
@@ -1385,5 +1599,5 @@ else:
 st.markdown("---")
 st.caption(
     "Teste controlado: Diagnóstico e Agenda consultam o banco. "
-    "A Agenda permite consultar e cadastrar. Edição, baixa e exclusão ainda não foram ativadas."
+    "A Agenda permite consultar, cadastrar e editar. Baixa e exclusão ainda não foram ativadas."
 )
