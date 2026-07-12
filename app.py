@@ -1418,18 +1418,34 @@ def id_seguro_registro(valor):
     return texto
 
 
-aba_diagnostico, aba_fluxo_futuro, aba_cartoes, aba_painel, aba_porquinhos, aba_agenda, aba_dividas = st.tabs([
+PAGINAS_APP = [
     "🧭 Diagnóstico Financeiro",
     "📅 Fluxo de Caixa Futuro",
     "💳 Cartões & Faturas",
-    "📊 Painel & Lançamentos", 
-    "🐷 Meus Porquinhos & Rumo ao Milhão", 
-    "📅 Agenda de Compromissos", 
-    "📋 Gestão de Dívidas & Passivos"
-])
+    "📊 Painel & Lançamentos",
+    "🐷 Meus Porquinhos & Rumo ao Milhão",
+    "📅 Agenda de Compromissos",
+    "📋 Gestão de Dívidas & Passivos",
+]
 
-# ==================== ABA 0 (DIAGNÓSTICO) ====================
-with aba_diagnostico:
+pagina_ativa = st.sidebar.radio(
+    "Navegação:",
+    PAGINAS_APP,
+    key="pagina_ativa_principal"
+)
+
+st.sidebar.caption(
+    "Somente a página selecionada é processada. "
+    "Isso reduz o uso de memória e evita quedas do servidor."
+)
+
+# ==================== PÁGINAS PRINCIPAIS ====================
+# Cada bloco abaixo é executado somente quando sua página está ativa.
+# Isso evita que gráficos, tabelas e centenas de widgets sejam montados
+# simultaneamente em todo rerun do Streamlit.
+
+# ==================== PÁGINA 0 (DIAGNÓSTICO) ====================
+if pagina_ativa == "🧭 Diagnóstico Financeiro":
     st.title("🧭 Diagnóstico Financeiro")
     st.caption("Uma leitura prática do mês para transformar os lançamentos em decisão.")
 
@@ -1554,8 +1570,8 @@ with aba_diagnostico:
     st.progress(min(indice_comprometimento / 100, 1.0))
 
 
-# ==================== ABA 1 (FLUXO DE CAIXA FUTURO) ====================
-with aba_fluxo_futuro:
+# ==================== PÁGINA 1 (FLUXO DE CAIXA FUTURO) ====================
+if pagina_ativa == "📅 Fluxo de Caixa Futuro":
     st.title("📅 Fluxo de Caixa Futuro")
     st.caption("Projeção dos próximos 7, 15 e 30 dias com base em agenda, fatura estimada e movimentações futuras já registradas.")
 
@@ -1618,7 +1634,7 @@ with aba_fluxo_futuro:
             df_fluxo_tabela["Entrada"] = df_fluxo_tabela["Entrada"].map(lambda v: f"R$ {v:,.2f}")
             df_fluxo_tabela["Saída"] = df_fluxo_tabela["Saída"].map(lambda v: f"R$ {v:,.2f}")
             df_fluxo_tabela["Saldo Projetado"] = df_fluxo_tabela["Saldo Projetado"].map(lambda v: f"R$ {v:,.2f}")
-            st.dataframe(df_fluxo_tabela, use_container_width=True, hide_index=True)
+            st.dataframe(df_fluxo_tabela, width="stretch", hide_index=True)
 
             df_grafico_fluxo = df_fluxo_visual.groupby("Data", as_index=False).agg({"Entrada": "sum", "Saída": "sum"})
             saldo_grafico = saldo_base_fluxo_futuro
@@ -1637,7 +1653,7 @@ with aba_fluxo_futuro:
                 title="Saldo projetado ao longo do período",
             )
             fig_fluxo.update_layout(margin=dict(t=50, b=10, l=10, r=10))
-            st.plotly_chart(fig_fluxo, use_container_width=True)
+            st.plotly_chart(fig_fluxo, width="stretch")
 
     st.markdown("---")
     st.subheader("🎯 Leitura prática")
@@ -1656,8 +1672,8 @@ with aba_fluxo_futuro:
         "Quanto mais completa estiver a agenda e o cartão, mais útil será o diagnóstico."
     )
 
-# ==================== ABA 2 (CARTÕES & FATURAS) ====================
-with aba_cartoes:
+# ==================== PÁGINA 2 (CARTÕES & FATURAS) ====================
+if pagina_ativa == "💳 Cartões & Faturas":
     st.title("💳 Cartões & Faturas")
     st.caption(
         "Controle separado para limite, fatura atual, compras parceladas, "
@@ -1837,7 +1853,7 @@ with aba_cartoes:
 
             salvar_assinatura = st.form_submit_button(
                 "Cadastrar assinatura mensal",
-                use_container_width=True
+                width="stretch"
             )
 
         if salvar_assinatura:
@@ -1961,7 +1977,7 @@ with aba_cartoes:
                 if col_acao_ass1.button(
                     "✏️ Editar cobranças futuras",
                     key=f"editar_assinatura_{serie_id}",
-                    use_container_width=True
+                    width="stretch"
                 ):
                     st.session_state[
                         "assinatura_editando_id"
@@ -1973,7 +1989,7 @@ with aba_cartoes:
                 if col_acao_ass2.button(
                     "⛔ Cancelar cobranças futuras",
                     key=f"cancelar_assinatura_{serie_id}",
-                    use_container_width=True
+                    width="stretch"
                 ):
                     st.session_state[
                         "assinatura_cancelando_id"
@@ -2032,14 +2048,14 @@ with aba_cartoes:
                         salvar_edicao_assinatura = (
                             col_salvar_ass.form_submit_button(
                                 "Salvar alterações",
-                                use_container_width=True
+                                width="stretch"
                             )
                         )
 
                         cancelar_edicao_assinatura = (
                             col_cancelar_edit_ass.form_submit_button(
                                 "Fechar edição",
-                                use_container_width=True
+                                width="stretch"
                             )
                         )
 
@@ -2119,7 +2135,7 @@ with aba_cartoes:
                         "Confirmar cancelamento",
                         key=f"confirmar_cancel_ass_{serie_id}",
                         type="primary",
-                        use_container_width=True
+                        width="stretch"
                     ):
                         try:
                             (
@@ -2155,7 +2171,7 @@ with aba_cartoes:
                     if col_fechar_cancel.button(
                         "Não cancelar",
                         key=f"fechar_cancel_ass_{serie_id}",
-                        use_container_width=True
+                        width="stretch"
                     ):
                         st.session_state[
                             "assinatura_cancelando_id"
@@ -2177,11 +2193,11 @@ with aba_cartoes:
         df_fatura_exibicao["Fatura Atual"] = df_fatura_exibicao["Fatura Atual"].map(lambda v: f"R$ {v:,.2f}")
         df_fatura_exibicao["Limite"] = df_fatura_exibicao["Limite"].map(lambda v: f"R$ {v:,.2f}" if v > 0 else "Não cadastrado")
         df_fatura_exibicao["% do Limite"] = df_fatura_exibicao["% do Limite"].map(lambda v: f"{v:.1f}%" if v > 0 else "-")
-        st.dataframe(df_fatura_exibicao, use_container_width=True, hide_index=True)
+        st.dataframe(df_fatura_exibicao, width="stretch", hide_index=True)
 
         fig_fatura_cartao = px.bar(df_fatura_por_cartao, x="Cartão", y="Fatura Atual", title="Fatura atual por cartão")
         fig_fatura_cartao.update_layout(margin=dict(t=50, b=10, l=10, r=10))
-        st.plotly_chart(fig_fatura_cartao, use_container_width=True)
+        st.plotly_chart(fig_fatura_cartao, width="stretch")
 
     st.markdown("---")
     st.subheader("🧾 Compras no cartão do mês")
@@ -2210,7 +2226,7 @@ with aba_cartoes:
         ]
         df_compras_mes = df_compras_mes.sort_values(by="Data")
         df_compras_mes["Valor"] = df_compras_mes["Valor"].map(lambda v: f"R$ {v:,.2f}")
-        st.dataframe(df_compras_mes, use_container_width=True, hide_index=True)
+        st.dataframe(df_compras_mes, width="stretch", hide_index=True)
 
     st.markdown("---")
     st.subheader("🔮 Parcelas e compras futuras")
@@ -2219,12 +2235,12 @@ with aba_cartoes:
     else:
         df_futuro_exibicao = df_compromisso_futuro_cartao.copy()
         df_futuro_exibicao["Valor Comprometido"] = df_futuro_exibicao["Valor Comprometido"].map(lambda v: f"R$ {v:,.2f}")
-        st.dataframe(df_futuro_exibicao, use_container_width=True, hide_index=True)
+        st.dataframe(df_futuro_exibicao, width="stretch", hide_index=True)
 
         df_futuro_grafico = df_compromisso_futuro_cartao.groupby("Mês", as_index=False)["Valor Comprometido"].sum()
         fig_futuro_cartao = px.bar(df_futuro_grafico, x="Mês", y="Valor Comprometido", title="Cartão já comprometido nos próximos meses")
         fig_futuro_cartao.update_layout(margin=dict(t=50, b=10, l=10, r=10))
-        st.plotly_chart(fig_futuro_cartao, use_container_width=True)
+        st.plotly_chart(fig_futuro_cartao, width="stretch")
 
     st.markdown("---")
     st.subheader("🎯 Leitura prática")
@@ -2238,8 +2254,8 @@ with aba_cartoes:
         st.write("- Ainda não há dados suficientes de cartão para uma leitura robusta.")
 
 
-# ==================== ABA 1 ====================
-with aba_painel:
+# ==================== PÁGINA 1 ====================
+if pagina_ativa == "📊 Painel & Lançamentos":
     st.title("Meu Planner Financeiro")
     
     st.markdown(f"### 👑 Gestão de Teto Orçamentário ({lista_meses[mes_selected_num]})")
@@ -2275,7 +2291,7 @@ with aba_painel:
                 df_pizza = df_saidas.groupby("grupo_orcamentario")["valor"].sum().reset_index()
                 fig_donut = px.pie(df_pizza, values="valor", names="grupo_orcamentario", hole=0.4, color_discrete_sequence=px.colors.qualitative.Safe)
                 fig_donut.update_layout(margin=dict(t=10, b=10, l=10, r=10))
-                st.plotly_chart(fig_donut, use_container_width=True)
+                st.plotly_chart(fig_donut, width="stretch")
     except:
         pass
 
@@ -2546,7 +2562,7 @@ with aba_painel:
 
         dados_editados = st.data_editor(
             data=df_editor,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             num_rows="fixed",
             disabled=["ID"],
@@ -2609,13 +2625,13 @@ with aba_painel:
 
         salvar_edicoes = col_salvar_tabela.button(
             "💾 Salvar edições",
-            use_container_width=True,
+            width="stretch",
             key="salvar_edicoes_lancamentos"
         )
 
         solicitar_exclusao = col_excluir_tabela.button(
             "🗑️ Excluir selecionados",
-            use_container_width=True,
+            width="stretch",
             key="solicitar_exclusao_lancamentos"
         )
 
@@ -2941,7 +2957,7 @@ with aba_painel:
                     col_confirmar_exclusao.button(
                         "Sim, excluir definitivamente",
                         type="primary",
-                        use_container_width=True,
+                        width="stretch",
                         key="confirmar_exclusao_lancamentos"
                     )
                 )
@@ -2949,7 +2965,7 @@ with aba_painel:
                 cancelar_exclusao = (
                     col_cancelar_exclusao.button(
                         "Cancelar",
-                        use_container_width=True,
+                        width="stretch",
                         key="cancelar_exclusao_lancamentos"
                     )
                 )
@@ -3007,8 +3023,8 @@ with aba_painel:
             "selecionados."
         )
 
-# ==================== ABA 2 (PORQUINHOS) ====================
-with aba_porquinhos:
+# ==================== PÁGINA 2 (PORQUINHOS) ====================
+if pagina_ativa == "🐷 Meus Porquinhos & Rumo ao Milhão":
     st.title("🐷 Meus Porquinhos & Metas Individuais")
     total_patrimonio_guardado = 0.0
     
@@ -3026,8 +3042,8 @@ with aba_porquinhos:
     else:
         st.info("Nenhum porquinho ou meta de investimento criada ainda.")
 
-# ==================== ABA 3 (AGENDA) ====================
-with aba_agenda:
+# ==================== PÁGINA 3 (AGENDA) ====================
+if pagina_ativa == "📅 Agenda de Compromissos":
     st.title("📅 Agenda de Compromissos Financeiros")
 
     feedback_agenda = st.session_state.pop("feedback_agenda", None)
@@ -3130,7 +3146,7 @@ with aba_agenda:
 
             enviar_conta = st.form_submit_button(
                 "Agendar Conta",
-                use_container_width=True
+                width="stretch"
             )
 
         if enviar_conta:
@@ -3313,7 +3329,7 @@ with aba_agenda:
 
             agendar_recebimento = st.form_submit_button(
                 "Agendar Recebimento",
-                use_container_width=True
+                width="stretch"
             )
 
         if agendar_recebimento:
@@ -3680,7 +3696,7 @@ with aba_agenda:
                         if col_baixa.button(
                             "✅ Pagar",
                             key=f"pay_{id_item}",
-                            use_container_width=True
+                            width="stretch"
                         ):
                             if not (
                                 grupo_destino_item
@@ -3778,7 +3794,7 @@ with aba_agenda:
                         if col_baixa.button(
                             "💰 Receber",
                             key=f"rec_{id_item}",
-                            use_container_width=True
+                            width="stretch"
                         ):
                             categoria_receita_item = (
                                 texto_seguro_registro(
@@ -3891,7 +3907,7 @@ with aba_agenda:
                     if col_editar.button(
                         "✏️ Editar",
                         key=f"edit_agenda_{id_item}",
-                        use_container_width=True
+                        width="stretch"
                     ):
                         st.session_state["agenda_editando_id"] = id_item
                         st.session_state["agenda_excluir_id"] = None
@@ -3899,7 +3915,7 @@ with aba_agenda:
                     if col_excluir.button(
                         "🗑️ Excluir",
                         key=f"delete_agenda_{id_item}",
-                        use_container_width=True
+                        width="stretch"
                     ):
                         st.session_state["agenda_excluir_id"] = id_item
                         st.session_state["agenda_editando_id"] = None
@@ -4035,14 +4051,14 @@ with aba_agenda:
                                 salvar_edicao = (
                                     col_salvar.form_submit_button(
                                         "💾 Salvar alterações",
-                                        use_container_width=True
+                                        width="stretch"
                                     )
                                 )
 
                                 cancelar_edicao = (
                                     col_cancelar.form_submit_button(
                                         "Cancelar",
-                                        use_container_width=True
+                                        width="stretch"
                                     )
                                 )
 
@@ -4244,7 +4260,7 @@ with aba_agenda:
                                 "Confirmar exclusão",
                                 key=f"confirm_delete_agenda_{id_item}",
                                 type="primary",
-                                use_container_width=True
+                                width="stretch"
                             ):
                                 try:
                                     consulta_exclusao = supabase.table(
@@ -4315,7 +4331,7 @@ with aba_agenda:
                             if col_cancela.button(
                                 "Não, cancelar",
                                 key=f"cancel_delete_agenda_{id_item}",
-                                use_container_width=True
+                                width="stretch"
                             ):
                                 st.session_state["agenda_excluir_id"] = None
                                 st.rerun()
@@ -4344,8 +4360,8 @@ with aba_agenda:
         st.info("Nenhum compromisso agendado.")
 
 
-# ==================== ABA 4 (GESTÃO DE DÍVIDAS) ====================
-with aba_dividas:
+# ==================== PÁGINA 4 (GESTÃO DE DÍVIDAS) ====================
+if pagina_ativa == "📋 Gestão de Dívidas & Passivos":
     st.title("📋 Controle Estrutural de Passivos e Dívidas")
     
     divida_bruta_total = sum([d["valor_original"] for d in lista_dividas_cadastradas])
