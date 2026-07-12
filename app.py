@@ -1227,7 +1227,8 @@ MAPA_CATEGORIAS = {
         "Saúde & Medicamentos", 
         "Transporte & Combustível",
         "Impostos & Obrigações Pessoais",
-        "👶 Pensão / Filho"
+        "Pensão / Obrigações Legais",
+        "Filho e Dependentes"
     ],
     "🟡 30% Estilo de Vida (Lazer e Custos Voláteis)": [
         "Lazer, Bares & Restaurantes", 
@@ -2318,7 +2319,17 @@ with aba_painel:
     with st.form("formulario_envio_blindado", clear_on_submit=True):
         valor = st.number_input("Qual o valor total da operação? (R$)", min_value=0.0, step=0.01, format="%.2f") if not is_parcelado else st.number_input("Qual o valor de CADA PARCELA? (R$)", min_value=0.0, step=0.01, format="%.2f")
         data_movimento = st.date_input("Data do evento:", datetime.date.today())
-        descricao = st.text_input("Descrição ou Estabelecimento:")
+        descricao = st.text_input(
+            "Descrição ou Estabelecimento:",
+            placeholder=(
+                "Ex.: Consulta pediátrica #filho | Babá sábado #filho"
+            )
+        )
+        st.caption(
+            "Use #filho na descrição para reunir todos os gastos do seu "
+            "filho no filtro, mesmo quando a categoria for Saúde, "
+            "Alimentação ou outra."
+        )
         satisfacao = st.select_slider("🧠 Nível de necessidade?", options=["1 - Impulsivo / Evitável", "2 - Útil / Desejável", "3 - Indispensável"], value="2 - Útil / Desejável")
         botao_enviar = st.form_submit_button("Confirmar Lançamento")
         
