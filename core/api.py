@@ -333,92 +333,91 @@ class SupabaseRestClient:
 
         return novo_registro
 
+    def buscar_configuracao_saldo(self) -> dict | None:
+        registros = self.buscar_movimentacoes(
+            filtros=[
+                (
+                    "descricao",
+                    "eq.[CONFIG_SALDO_INICIAL] Conta Principal",
+                )
+            ],
+            order="data.desc",
+            limit=100,
+        )
 
-def buscar_configuracao_saldo(self) -> dict | None:
-    registros = self.buscar_movimentacoes(
-        filtros=[
-            (
-                "descricao",
-                "eq.[CONFIG_SALDO_INICIAL] Conta Principal",
-            )
-        ],
-        order="data.desc",
-        limit=100,
-    )
+        if not registros:
+            return None
 
-    if not registros:
-        return None
+        def timestamp_config(registro: dict) -> float:
+            texto = str(registro.get("satisfacao") or "")
 
-    def timestamp_config(registro: dict) -> float:
-        texto = str(registro.get("satisfacao") or "")
+            for parte in texto.split("|"):
+                parte = parte.strip()
 
-        for parte in texto.split("|"):
-            parte = parte.strip()
+                if parte.startswith("SETUP_TS:"):
+                    try:
+                        return float(
+                            parte.split(":", 1)[1].strip()
+                        )
+                    except (TypeError, ValueError):
+                        return 0.0
 
-            if parte.startswith("SETUP_TS:"):
-                try:
-                    return float(
-                        parte.split(":", 1)[1].strip()
-                    )
-                except (TypeError, ValueError):
-                    return 0.0
+            return 0.0
 
-        return 0.0
+        return max(
+            registros,
+            key=timestamp_config,
+        )
 
-    return max(
-        registros,
-        key=timestamp_config,
-    )
+    def salvar_configuracao_saldo(
+        self,
+        *,
+        data_inicio: datetime.date,
+        saldo_atual_informado: float,
+        saldo_inicial_tecnico: float,
+        fluxo_liquido_existente: float,
+        setup_timestamp: float,
+    ) -> dict:
+        antigas = self.buscar_movimentacoes(
+            filtros=[
+                (
+                    "descricao",
+                    "eq.[CONFIG_SALDO_INICIAL] Conta Principal",
+                )
+            ],
+            select="id,user_id",
+            limit=100,
+        )
 
-def salvar_configuracao_saldo(
-    self,
-    *,
-    data_inicio: datetime.date,
-    saldo_atual_informado: float,
-    saldo_inicial_tecnico: float,
-    fluxo_liquido_existente: float,
-    setup_timestamp: float,
-) -> dict:
-    antigas = self.buscar_movimentacoes(
-        filtros=[
-            (
-                "descricao",
-                "eq.[CONFIG_SALDO_INICIAL] Conta Principal",
-            )
-        ],
-        select="id,user_id",
-        limit=100,
-    )
+        nova = self.criar_movimentacao({
+            "data": data_inicio.isoformat(),
+            "descricao": (
+                "[CONFIG_SALDO_INICIAL] Conta Principal"
+            ),
+            "grupo_orcamentario": "CONFIGURAÇÃO",
+            "subcategoria": "Saldo Inicial da Conta",
+            "valor": float(saldo_inicial_tecnico),
+            "satisfacao": (
+                f"SETUP_TS:{float(setup_timestamp)}"
+                f"|SALDO_ATUAL:{float(saldo_atual_informado)}"
+                f"|FLUXO_EXISTENTE:{float(fluxo_liquido_existente)}"
+            ),
+            "tipo": "Configuração",
+        })
 
-    nova = self.criar_movimentacao({
-        "data": data_inicio.isoformat(),
-        "descricao": (
-            "[CONFIG_SALDO_INICIAL] Conta Principal"
-        ),
-        "grupo_orcamentario": "CONFIGURAÇÃO",
-        "subcategoria": "Saldo Inicial da Conta",
-        "valor": float(saldo_inicial_tecnico),
-        "satisfacao": (
-            f"SETUP_TS:{float(setup_timestamp)}"
-            f"|SALDO_ATUAL:{float(saldo_atual_informado)}"
-            f"|FLUXO_EXISTENTE:{float(fluxo_liquido_existente)}"
-        ),
-        "tipo": "Configuração",
-    })
+        novo_id = nova.get("id")
 
-    novo_id = nova.get("id")
+        for antiga in antigas:
+            id_antigo = antiga.get("id")
 
-    for antiga in antigas:
-        id_antigo = antiga.get("id")
+            if id_antigo is None or id_antigo == novo_id:
+                continue
 
-        if id_antigo is None or id_antigo == novo_id:
-            continue
+            try:
+                self.excluir_movimentacao(id_antigo)
+            except Exception:
+                # A configuração mais recente continua prevalecendo
+                # pelo SETUP_TS salvo nos metadados.
+                pass
 
-        try:
-            self.excluir_movimentacao(id_antigo)
-        except Exception:
-            # A configuração mais recente continua prevalecendo
-            # pelo SETUP_TS salvo nos metadados.
-            pass
-
-    return nova
+        return nova
