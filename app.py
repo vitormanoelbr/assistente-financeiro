@@ -9,7 +9,7 @@ from core.auth import (
     renovar_token,
 )
 from core.config import carregar_configuracao
-from pages_app import agenda, diagnostico
+from pages_app import agenda, diagnostico, saldo
 
 
 st.set_page_config(
@@ -61,6 +61,21 @@ if st.sidebar.button(
         SUPABASE_KEY,
     )
 
+# Onboarding obrigatório apenas enquanto a conta
+# ainda não possui um ponto de partida.
+try:
+    config_saldo = api.buscar_configuracao_saldo()
+except Exception as erro:
+    st.error(
+        "Não foi possível verificar a configuração da conta: "
+        f"{type(erro).__name__}: {erro}"
+    )
+    st.stop()
+
+if config_saldo is None:
+    saldo.renderizar(api)
+    st.stop()
+
 st.sidebar.markdown("---")
 st.sidebar.header("Navegação")
 
@@ -68,17 +83,20 @@ pagina = st.sidebar.radio(
     "Escolha uma área:",
     [
         "Diagnóstico",
+        "Conta",
         "Agenda",
     ],
 )
 
 st.sidebar.markdown("---")
 st.sidebar.caption(
-    "Base modular em desenvolvimento. "
-    "Cada página consulta somente seus próprios dados."
+    "Arquitetura modular. Cada página consulta "
+    "somente os dados necessários."
 )
 
 if pagina == "Diagnóstico":
     diagnostico.renderizar(api)
+elif pagina == "Conta":
+    saldo.renderizar(api)
 elif pagina == "Agenda":
     agenda.renderizar(api)
