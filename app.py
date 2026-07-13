@@ -594,11 +594,16 @@ st.sidebar.header("🏷️ Rastreamento Inteligente")
 tag_busca = st.sidebar.text_input("Filtrar por Tag / Texto:", placeholder="Ex: #filho, #viagem").strip().lower()
 
 # --- VARIÁVEIS DE CONTROLE ACUMULADO ---
-renda_base_usuario = 0.0  
-faturamento_extra_mes = 0.0
-gastos_dinheiro_caixa = 0.0       
-fatura_acumulada_mes = 0.0   
+renda_base_usuario = 0.0
+saldo_inicial_conta = 0.0
+data_inicio_controle = None
+saldo_inicial_configurado = False
+entradas_conta_desde_inicio = 0.0
+saidas_conta_desde_inicio = 0.0
 
+faturamento_extra_mes = 0.0
+gastos_dinheiro_caixa = 0.0
+fatura_acumulada_mes = 0.0
 gastos_essencial = 0.0
 gastos_estilo = 0.0
 gastos_negocio = 0.0
@@ -696,6 +701,14 @@ if supabase:
                 if "[CONFIG_PERFIL]" in desc and "Renda Base Nativa" in subcat:
                     renda_base_usuario = val_mov
                     continue
+
+                if "[CONFIG_SALDO_INICIAL]" in desc:
+                    saldo_inicial_conta = val_mov
+                    data_inicio_controle = dt_item
+                    saldo_inicial_configurado = (
+                        data_inicio_controle is not None
+                    )
+                    continue
                 
                 if "[DIVIDA_ATIVA]" in desc:
                     lista_dividas_cadastradas.append({
@@ -736,6 +749,80 @@ if supabase:
                 if "QUITAÇÃO" in grupo.upper() or "DIVIDAS" in grupo.upper() or "📋" in grupo:
                     if "SAÍDA" in tipo_mov.upper() or "📱" in tipo_mov or "💳" in tipo_mov:
                         amortizacoes_totais_historicas[subcat] = amortizacoes_totais_historicas.get(subcat, 0.0) + val_mov
+
+            # --- SALDO CONTÁBIL DA CONTA ---
+            # A renda base é apenas referência de orçamento.
+            if (
+                saldo_inicial_configurado
+                and not df_todos_dados.empty
+            ):
+                for _, movimento_conta in df_todos_dados.iterrows():
+                    data_movimento = movimento_conta.get("data_dt")
+                    valor_movimento = normalizar_numero(
+                        movimento_conta.get("valor"),
+                        0.0
+                    )
+                    descricao_movimento = normalizar_texto(
+                        movimento_conta.get("descricao")
+                    ).upper()
+                    grupo_movimento = normalizar_texto(
+                        movimento_conta.get("grupo_orcamentario")
+                    ).upper()
+                    tipo_original_conta = normalizar_texto(
+                        movimento_conta.get("tipo")
+                    )
+                    tipo_movimento = tipo_original_conta.upper()
+
+                    if (
+                        data_movimento is None
+                        or data_movimento < data_inicio_controle
+                        or data_movimento > hoje
+                        or valor_movimento <= 0
+                    ):
+                        continue
+
+                    if (
+                        "CONFIG" in grupo_movimento
+                        or "AGENDA" in grupo_movimento
+                        or "[CONFIG_" in descricao_movimento
+                        or "[DIVIDA_ATIVA]" in descricao_movimento
+                    ):
+                        continue
+
+                    eh_compra_cartao = (
+                        "CARTÃO" in tipo_movimento
+                        or "CARTAO" in tipo_movimento
+                        or "💳" in tipo_original_conta
+                    )
+                    if eh_compra_cartao:
+                        continue
+
+                    eh_entrada_conta = any(
+                        termo in tipo_movimento
+                        for termo in (
+                            "ENTRADA",
+                            "FATURAMENTO",
+                            "RECEITA",
+                            "RECEBIMENTO",
+                        )
+                    )
+
+                    eh_saida_conta = any(
+                        termo in tipo_movimento
+                        for termo in (
+                            "SAÍDA",
+                            "SAIDA",
+                            "PIX",
+                            "DÉBITO",
+                            "DEBITO",
+                            "PAGAMENTO",
+                        )
+                    ) or "📱" in tipo_original_conta
+
+                    if eh_entrada_conta:
+                        entradas_conta_desde_inicio += valor_movimento
+                    elif eh_saida_conta:
+                        saidas_conta_desde_inicio += valor_movimento
 
             # --- CORREÇÃO DO FILTRO DE TEMPO REAL ---
             if not df_todos_dados.empty:
@@ -834,10 +921,32 @@ if not df_todos_dados.empty:
         )
 
 # --- ORIGENS DE VERDADE MATEMÁTICA ---
-saldo_real_exibido = renda_base_usuario + faturamento_extra_mes - gastos_dinheiro_caixa
-total_consumido_orcamento = gastos_dinheiro_caixa + fatura_acumulada_mes
-receita_total_reconhecida_mes = renda_base_usuario + faturamento_extra_mes
-saldo_projetado_fim_mes = saldo_real_exibido + agenda_a_receber_mes - agenda_a_pagar_mes - fatura_acumulada_mes
+saldo_calculado_conta = (
+    saldo_inicial_conta
+    + entradas_conta_desde_inicio
+    - saidas_conta_desde_inicio
+) if saldo_inicial_configurado else None
+
+saldo_real_exibido = (
+    saldo_calculado_conta
+    if saldo_calculado_conta is not None
+    else 0.0
+)
+
+total_consumido_orcamento = (
+    gastos_dinheiro_caixa
+    + fatura_acumulada_mes
+)
+receita_total_reconhecida_mes = (
+    renda_base_usuario
+    + faturamento_extra_mes
+)
+saldo_projetado_fim_mes = (
+    saldo_real_exibido
+    + agenda_a_receber_mes
+    - agenda_a_pagar_mes
+    - fatura_acumulada_mes
+)
 
 porcentagem_cartao_renda = (fatura_acumulada_mes / renda_base_usuario) if renda_base_usuario > 0 else 0.0
 porcentagem_consumo_total = (total_consumido_orcamento / receita_total_reconhecida_mes) if receita_total_reconhecida_mes > 0 else 0.0
@@ -1207,6 +1316,84 @@ if st.sidebar.button("💾 Salvar/Atualizar Renda Base"):
     except Exception as e:
         st.sidebar.error(f"Erro: {e}")
 
+st.sidebar.markdown("---")
+st.sidebar.subheader("🏦 Início do controle da conta")
+st.sidebar.caption(
+    "Informe uma única data de corte e o saldo que constava no "
+    "extrato nessa data. Depois disso, o app calcula o saldo pelas "
+    "movimentações reais. A renda mensal não é somada ao saldo."
+)
+
+data_corte_input = st.sidebar.date_input(
+    "Data de início do controle:",
+    value=(
+        data_inicio_controle
+        if data_inicio_controle is not None
+        else hoje
+    ),
+    format="DD/MM/YYYY",
+    key="data_inicio_saldo_conta",
+)
+
+saldo_inicial_input = st.sidebar.number_input(
+    "Saldo no extrato nessa data (R$):",
+    value=float(
+        saldo_inicial_conta
+        if saldo_inicial_configurado
+        else 0.0
+    ),
+    step=10.0,
+    format="%.2f",
+    key="valor_inicio_saldo_conta",
+)
+
+if st.sidebar.button(
+    "💾 Salvar ponto de partida",
+    key="salvar_saldo_inicial_conta",
+):
+    try:
+        (
+            supabase.table("movimentacoes")
+            .delete()
+            .eq(
+                "descricao",
+                "[CONFIG_SALDO_INICIAL] Conta Principal"
+            )
+            .eq("user_id", USER_ID)
+            .execute()
+        )
+
+        (
+            supabase.table("movimentacoes")
+            .insert({
+                "data": str(data_corte_input),
+                "valor": float(saldo_inicial_input),
+                "tipo": "Configuração",
+                "descricao": (
+                    "[CONFIG_SALDO_INICIAL] Conta Principal"
+                ),
+                "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
+                "subcategoria": "Saldo Inicial da Conta",
+                "satisfacao": "3 - Indispensável",
+                "user_id": USER_ID,
+            })
+            .execute()
+        )
+
+        st.sidebar.success("Ponto de partida salvo.")
+        st.rerun()
+
+    except Exception as erro:
+        st.sidebar.error(
+            "Não foi possível salvar o ponto de partida: "
+            f"{erro}"
+        )
+
+if not saldo_inicial_configurado:
+    st.sidebar.warning(
+        "Configure o ponto de partida para calcular o saldo da conta."
+    )
+
 LIMITE_ESSENCIAL = renda_base_usuario * 0.50       
 text_limite_essencial = f"R$ {LIMITE_ESSENCIAL:,.2f}" if LIMITE_ESSENCIAL > 0 else "Não Definido"
 LIMITE_ESTILO_DE_VIDA = renda_base_usuario * 0.30  
@@ -1453,6 +1640,13 @@ if pagina_ativa == "🧭 Diagnóstico Financeiro":
     alertas_diagnostico = []
     recomendacoes_diagnostico = []
 
+    if not saldo_inicial_configurado:
+        st.warning(
+            "O saldo da conta ainda não foi configurado. "
+            "Defina uma data de corte e o saldo do extrato "
+            "na barra lateral."
+        )
+
     if renda_base_usuario <= 0:
         pontos_risco += 3
         alertas_diagnostico.append("A renda base ainda não foi definida. Sem isso, o diagnóstico perde precisão.")
@@ -1527,7 +1721,18 @@ if pagina_ativa == "🧭 Diagnóstico Financeiro":
     st.write(mensagem_status)
 
     col_diag1, col_diag2, col_diag3 = st.columns(3)
-    col_diag1.metric("Saldo atual em conta", f"R$ {saldo_real_exibido:,.2f}")
+    col_diag1.metric(
+        "Saldo calculado da conta",
+        (
+            f"R$ {saldo_real_exibido:,.2f}"
+            if saldo_inicial_configurado
+            else "Não configurado"
+        ),
+        help=(
+            "Saldo inicial + entradas recebidas - saídas pagas. "
+            "A renda base não é somada automaticamente."
+        ),
+    )
     col_diag2.metric("Saldo projetado fim do mês", f"R$ {saldo_projetado_fim_mes:,.2f}")
     col_diag3.metric("Consumo total da renda", f"{porcentagem_consumo_total * 100:.1f}%")
 
@@ -2260,7 +2465,19 @@ if pagina_ativa == "📊 Painel & Lançamentos":
     
     st.markdown(f"### 👑 Gestão de Teto Orçamentário ({lista_meses[mes_selected_num]})")
     c_caixa1, c_caixa2, c_caixa3 = st.columns(3)
-    c_caixa1.metric(label="💰 Saldo Atual em Conta", value=f"R$ {saldo_real_exibido:,.2f}", help="Dinheiro físico disponível e líquido na sua conta corrente hoje.")
+    c_caixa1.metric(
+        label="💰 Saldo Calculado da Conta",
+        value=(
+            f"R$ {saldo_real_exibido:,.2f}"
+            if saldo_inicial_configurado
+            else "Não configurado"
+        ),
+        help=(
+            "Saldo inicial + entradas recebidas - saídas pagas. "
+            "Compras no cartão só reduzem a conta quando a fatura "
+            "é paga."
+        ),
+    )
     c_caixa2.metric(label="📈 Faturamento Extra Capturado", value=f"R$ {faturamento_extra_mes:,.2f}", help="Total de receitas extras geradas neste ciclo mensal.")
     c_caixa3.metric(label="📉 Limite Total Consumido", value=f"R$ {total_consumido_orcamento:,.2f}", help="O impacto total real que seu padrão de vida gerou no seu orçamento (Dinheiro + Cartão).")
 
