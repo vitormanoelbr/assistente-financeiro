@@ -88,6 +88,118 @@ def normalizar_texto(valor, padrao=""):
     return texto if texto else padrao
 
 
+
+def classificar_movimento_conta(registro) -> str:
+    """
+    Classifica apenas movimentos que alteram a conta bancária.
+
+    Retorna:
+    - "entrada"
+    - "saida"
+    - "ignorar"
+    """
+    descricao = normalizar_texto(
+        registro.get("descricao")
+    ).upper()
+    grupo = normalizar_texto(
+        registro.get("grupo_orcamentario")
+    ).upper()
+    tipo_original = normalizar_texto(
+        registro.get("tipo")
+    )
+    tipo = tipo_original.upper()
+
+    if (
+        "CONFIG" in grupo
+        or "AGENDA" in grupo
+        or "[CONFIG_" in descricao
+        or "[DIVIDA_ATIVA]" in descricao
+    ):
+        return "ignorar"
+
+    # Compra no cartão não reduz a conta no dia da compra.
+    if (
+        "CARTÃO" in tipo
+        or "CARTAO" in tipo
+        or "💳" in tipo_original
+    ):
+        return "ignorar"
+
+    if any(
+        termo in tipo
+        for termo in (
+            "ENTRADA",
+            "FATURAMENTO",
+            "RECEITA",
+            "RECEBIMENTO",
+        )
+    ):
+        return "entrada"
+
+    if (
+        any(
+            termo in tipo
+            for termo in (
+                "SAÍDA",
+                "SAIDA",
+                "PIX",
+                "DÉBITO",
+                "DEBITO",
+                "PAGAMENTO",
+            )
+        )
+        or "📱" in tipo_original
+    ):
+        return "saida"
+
+    return "ignorar"
+
+
+def calcular_fluxo_real_conta(
+    dataframe: pd.DataFrame,
+    data_inicial: datetime.date,
+    data_final: datetime.date,
+) -> tuple[float, float]:
+    """
+    Soma entradas e saídas reais entre duas datas, inclusive.
+
+    Registros de configuração, agenda e compras no cartão são ignorados.
+    """
+    entradas = 0.0
+    saidas = 0.0
+
+    if dataframe is None or dataframe.empty:
+        return entradas, saidas
+
+    for _, registro in dataframe.iterrows():
+        data_movimento = normalizar_data(
+            registro.get("data_dt")
+            if "data_dt" in registro
+            else registro.get("data")
+        )
+
+        valor_movimento = normalizar_numero(
+            registro.get("valor"),
+            0.0
+        )
+
+        if (
+            data_movimento is None
+            or data_movimento < data_inicial
+            or data_movimento > data_final
+            or valor_movimento <= 0
+        ):
+            continue
+
+        classificacao = classificar_movimento_conta(registro)
+
+        if classificacao == "entrada":
+            entradas += valor_movimento
+        elif classificacao == "saida":
+            saidas += valor_movimento
+
+    return entradas, saidas
+
 def extrair_metadado_agenda(texto: str, chave: str) -> Optional[str]:
     """Lê metadados gravados no campo satisfação sem exigir nova tabela."""
     prefixo = f"{chave}:"
@@ -598,6 +710,9 @@ renda_base_usuario = 0.0
 saldo_inicial_conta = 0.0
 data_inicio_controle = None
 saldo_inicial_configurado = False
+timestamp_config_saldo = -1.0
+saldo_informado_na_configuracao = None
+fluxo_existente_na_configuracao = None
 entradas_conta_desde_inicio = 0.0
 saidas_conta_desde_inicio = 0.0
 
@@ -703,11 +818,43 @@ if supabase:
                     continue
 
                 if "[CONFIG_SALDO_INICIAL]" in desc:
-                    saldo_inicial_conta = val_mov
-                    data_inicio_controle = dt_item
-                    saldo_inicial_configurado = (
-                        data_inicio_controle is not None
+                    metadados_saldo = normalizar_texto(
+                        item.get("satisfacao")
                     )
+
+                    ts_config = normalizar_numero(
+                        extrair_metadado_agenda(
+                            metadados_saldo,
+                            "SETUP_TS"
+                        ),
+                        0.0
+                    )
+
+                    if ts_config >= timestamp_config_saldo:
+                        timestamp_config_saldo = ts_config
+                        saldo_inicial_conta = val_mov
+                        data_inicio_controle = dt_item
+                        saldo_inicial_configurado = (
+                            data_inicio_controle is not None
+                        )
+                        saldo_informado_na_configuracao = (
+                            normalizar_numero(
+                                extrair_metadado_agenda(
+                                    metadados_saldo,
+                                    "SALDO_ATUAL"
+                                ),
+                                None
+                            )
+                        )
+                        fluxo_existente_na_configuracao = (
+                            normalizar_numero(
+                                extrair_metadado_agenda(
+                                    metadados_saldo,
+                                    "FLUXO_EXISTENTE"
+                                ),
+                                None
+                            )
+                        )
                     continue
                 
                 if "[DIVIDA_ATIVA]" in desc:
@@ -752,77 +899,15 @@ if supabase:
 
             # --- SALDO CONTÁBIL DA CONTA ---
             # A renda base é apenas referência de orçamento.
-            if (
-                saldo_inicial_configurado
-                and not df_todos_dados.empty
-            ):
-                for _, movimento_conta in df_todos_dados.iterrows():
-                    data_movimento = movimento_conta.get("data_dt")
-                    valor_movimento = normalizar_numero(
-                        movimento_conta.get("valor"),
-                        0.0
-                    )
-                    descricao_movimento = normalizar_texto(
-                        movimento_conta.get("descricao")
-                    ).upper()
-                    grupo_movimento = normalizar_texto(
-                        movimento_conta.get("grupo_orcamentario")
-                    ).upper()
-                    tipo_original_conta = normalizar_texto(
-                        movimento_conta.get("tipo")
-                    )
-                    tipo_movimento = tipo_original_conta.upper()
-
-                    if (
-                        data_movimento is None
-                        or data_movimento < data_inicio_controle
-                        or data_movimento > hoje
-                        or valor_movimento <= 0
-                    ):
-                        continue
-
-                    if (
-                        "CONFIG" in grupo_movimento
-                        or "AGENDA" in grupo_movimento
-                        or "[CONFIG_" in descricao_movimento
-                        or "[DIVIDA_ATIVA]" in descricao_movimento
-                    ):
-                        continue
-
-                    eh_compra_cartao = (
-                        "CARTÃO" in tipo_movimento
-                        or "CARTAO" in tipo_movimento
-                        or "💳" in tipo_original_conta
-                    )
-                    if eh_compra_cartao:
-                        continue
-
-                    eh_entrada_conta = any(
-                        termo in tipo_movimento
-                        for termo in (
-                            "ENTRADA",
-                            "FATURAMENTO",
-                            "RECEITA",
-                            "RECEBIMENTO",
-                        )
-                    )
-
-                    eh_saida_conta = any(
-                        termo in tipo_movimento
-                        for termo in (
-                            "SAÍDA",
-                            "SAIDA",
-                            "PIX",
-                            "DÉBITO",
-                            "DEBITO",
-                            "PAGAMENTO",
-                        )
-                    ) or "📱" in tipo_original_conta
-
-                    if eh_entrada_conta:
-                        entradas_conta_desde_inicio += valor_movimento
-                    elif eh_saida_conta:
-                        saidas_conta_desde_inicio += valor_movimento
+            if saldo_inicial_configurado:
+                (
+                    entradas_conta_desde_inicio,
+                    saidas_conta_desde_inicio,
+                ) = calcular_fluxo_real_conta(
+                    df_todos_dados,
+                    data_inicio_controle,
+                    hoje,
+                )
 
             # --- CORREÇÃO DO FILTRO DE TEMPO REAL ---
             if not df_todos_dados.empty:
@@ -979,7 +1064,11 @@ def eh_saida_caixa(tipo_movimento: str) -> bool:
     return any(palavra in tipo_normalizado for palavra in ["SAÍDA", "SAIDA", "PIX", "DÉBITO", "DEBITO"]) or "📱" in str(tipo_movimento or "")
 
 
-saldo_base_fluxo_futuro = renda_base_usuario
+saldo_base_fluxo_futuro = (
+    saldo_real_exibido
+    if saldo_inicial_configurado
+    else 0.0
+)
 entradas_realizadas_ate_hoje = 0.0
 saidas_caixa_realizadas_ate_hoje = 0.0
 fatura_estimada_mes_atual = 0.0
@@ -1069,7 +1158,11 @@ if not df_todos_dados.empty:
                     "Saída": valor_item,
                 })
 
-saldo_base_fluxo_futuro = renda_base_usuario + entradas_realizadas_ate_hoje - saidas_caixa_realizadas_ate_hoje
+saldo_base_fluxo_futuro = (
+    saldo_real_exibido
+    if saldo_inicial_configurado
+    else 0.0
+)
 
 if fatura_estimada_mes_atual > 0:
     eventos_fluxo_futuro.append({
@@ -1317,82 +1410,23 @@ if st.sidebar.button("💾 Salvar/Atualizar Renda Base"):
         st.sidebar.error(f"Erro: {e}")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🏦 Início do controle da conta")
-st.sidebar.caption(
-    "Informe uma única data de corte e o saldo que constava no "
-    "extrato nessa data. Depois disso, o app calcula o saldo pelas "
-    "movimentações reais. A renda mensal não é somada ao saldo."
-)
+st.sidebar.subheader("🏦 Conta principal")
 
-data_corte_input = st.sidebar.date_input(
-    "Data de início do controle:",
-    value=(
-        data_inicio_controle
-        if data_inicio_controle is not None
-        else hoje
-    ),
-    format="DD/MM/YYYY",
-    key="data_inicio_saldo_conta",
-)
-
-saldo_inicial_input = st.sidebar.number_input(
-    "Saldo no extrato nessa data (R$):",
-    value=float(
-        saldo_inicial_conta
-        if saldo_inicial_configurado
-        else 0.0
-    ),
-    step=10.0,
-    format="%.2f",
-    key="valor_inicio_saldo_conta",
-)
-
-if st.sidebar.button(
-    "💾 Salvar ponto de partida",
-    key="salvar_saldo_inicial_conta",
-):
-    try:
-        (
-            supabase.table("movimentacoes")
-            .delete()
-            .eq(
-                "descricao",
-                "[CONFIG_SALDO_INICIAL] Conta Principal"
-            )
-            .eq("user_id", USER_ID)
-            .execute()
-        )
-
-        (
-            supabase.table("movimentacoes")
-            .insert({
-                "data": str(data_corte_input),
-                "valor": float(saldo_inicial_input),
-                "tipo": "Configuração",
-                "descricao": (
-                    "[CONFIG_SALDO_INICIAL] Conta Principal"
-                ),
-                "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
-                "subcategoria": "Saldo Inicial da Conta",
-                "satisfacao": "3 - Indispensável",
-                "user_id": USER_ID,
-            })
-            .execute()
-        )
-
-        st.sidebar.success("Ponto de partida salvo.")
-        st.rerun()
-
-    except Exception as erro:
-        st.sidebar.error(
-            "Não foi possível salvar o ponto de partida: "
-            f"{erro}"
-        )
-
-if not saldo_inicial_configurado:
-    st.sidebar.warning(
-        "Configure o ponto de partida para calcular o saldo da conta."
+if saldo_inicial_configurado:
+    st.sidebar.success(
+        "Controle iniciado em "
+        f"{data_inicio_controle.strftime('%d/%m/%Y')}."
     )
+    st.sidebar.metric(
+        "Saldo calculado",
+        f"R$ {saldo_real_exibido:,.2f}",
+    )
+
+    if st.sidebar.button(
+        "Reconfigurar conta",
+        key="abrir_reconfiguracao_conta",
+    ):
+        st.session_state["mostrar_reconfiguracao_conta"] = True
 
 LIMITE_ESSENCIAL = renda_base_usuario * 0.50       
 text_limite_essencial = f"R$ {LIMITE_ESSENCIAL:,.2f}" if LIMITE_ESSENCIAL > 0 else "Não Definido"
@@ -1605,6 +1639,111 @@ def id_seguro_registro(valor):
     return texto
 
 
+
+
+def salvar_inicio_controle_conta(
+    data_corte: datetime.date,
+    saldo_atual_informado: float,
+) -> None:
+    """
+    Reconcilia lançamentos já existentes e grava um ponto de partida.
+
+    O valor técnico salvo é:
+    saldo atual informado - fluxo líquido já registrado desde a data.
+    """
+    if data_corte > hoje:
+        raise ValueError(
+            "A data de início não pode estar no futuro."
+        )
+
+    entradas_existentes, saidas_existentes = (
+        calcular_fluxo_real_conta(
+            df_todos_dados,
+            data_corte,
+            hoje,
+        )
+    )
+
+    fluxo_liquido_existente = (
+        entradas_existentes - saidas_existentes
+    )
+
+    saldo_inicial_tecnico = (
+        float(saldo_atual_informado)
+        - fluxo_liquido_existente
+    )
+
+    timestamp_setup = time.time()
+
+    registros_antigos = (
+        supabase.table("movimentacoes")
+        .select("id")
+        .eq("user_id", USER_ID)
+        .eq(
+            "descricao",
+            "[CONFIG_SALDO_INICIAL] Conta Principal"
+        )
+        .execute()
+    )
+
+    ids_antigos = [
+        item.get("id")
+        for item in (
+            getattr(registros_antigos, "data", None) or []
+        )
+        if item.get("id") is not None
+    ]
+
+    resposta_insercao = (
+        supabase.table("movimentacoes")
+        .insert({
+            "data": str(data_corte),
+            "valor": float(saldo_inicial_tecnico),
+            "tipo": "Configuração",
+            "descricao": (
+                "[CONFIG_SALDO_INICIAL] Conta Principal"
+            ),
+            "grupo_orcamentario": "⚙️ CONFIGURAÇÃO",
+            "subcategoria": "Saldo Inicial da Conta",
+            "satisfacao": (
+                f"SETUP_TS:{timestamp_setup}"
+                f"|SALDO_ATUAL:{float(saldo_atual_informado)}"
+                f"|FLUXO_EXISTENTE:{fluxo_liquido_existente}"
+            ),
+            "user_id": USER_ID,
+        })
+        .execute()
+    )
+
+    dados_inseridos = (
+        getattr(resposta_insercao, "data", None) or []
+    )
+
+    if not dados_inseridos:
+        raise RuntimeError(
+            "O banco não confirmou a criação do ponto de partida."
+        )
+
+    novo_id = dados_inseridos[0].get("id")
+
+    # Remove configurações antigas somente depois que a nova foi criada.
+    for id_antigo in ids_antigos:
+        if id_antigo == novo_id:
+            continue
+
+        try:
+            (
+                supabase.table("movimentacoes")
+                .delete()
+                .eq("id", id_antigo)
+                .eq("user_id", USER_ID)
+                .execute()
+            )
+        except Exception:
+            # A configuração mais recente continuará prevalecendo
+            # pelo timestamp salvo nos metadados.
+            pass
+
 PAGINAS_APP = [
     "🧭 Diagnóstico Financeiro",
     "📅 Fluxo de Caixa Futuro",
@@ -1614,6 +1753,120 @@ PAGINAS_APP = [
     "📅 Agenda de Compromissos",
     "📋 Gestão de Dívidas & Passivos",
 ]
+
+
+# ==================== ONBOARDING DA CONTA ====================
+if (
+    not saldo_inicial_configurado
+    or st.session_state.get(
+        "mostrar_reconfiguracao_conta",
+        False
+    )
+):
+    modo_reconfiguracao = saldo_inicial_configurado
+
+    st.title(
+        "🏦 Ajustar conta principal"
+        if modo_reconfiguracao
+        else "🏦 Configure sua conta principal"
+    )
+
+    st.write(
+        "Informe quanto existe na conta agora. O sistema vai analisar "
+        "os lançamentos que você já registrou desde a data escolhida "
+        "e ajustar o ponto de partida automaticamente, sem descontar "
+        "essas despesas duas vezes."
+    )
+
+    if modo_reconfiguracao:
+        st.warning(
+            "Use esta opção apenas para corrigir o ponto de partida "
+            "ou reconciliar o app com o extrato."
+        )
+    else:
+        st.info(
+            "Essa configuração é feita uma única vez. Depois disso, "
+            "o saldo será atualizado pelas novas entradas e saídas."
+        )
+
+    with st.form("form_inicio_controle_conta"):
+        data_corte_onboarding = st.date_input(
+            "Desde quando deseja controlar esta conta?",
+            value=(
+                data_inicio_controle
+                if data_inicio_controle is not None
+                else hoje
+            ),
+            max_value=hoje,
+            format="DD/MM/YYYY",
+            key="onboarding_data_corte",
+        )
+
+        saldo_atual_onboarding = st.number_input(
+            "Quanto está disponível na conta agora? (R$)",
+            value=float(
+                saldo_real_exibido
+                if saldo_inicial_configurado
+                else 0.0
+            ),
+            step=10.0,
+            format="%.2f",
+            key="onboarding_saldo_atual",
+        )
+
+        confirmar_onboarding = st.checkbox(
+            "Confirmo que este valor corresponde ao saldo mostrado "
+            "no extrato agora.",
+            key="onboarding_confirmacao",
+        )
+
+        col_onb1, col_onb2 = st.columns(2)
+
+        salvar_onboarding = col_onb1.form_submit_button(
+            "Confirmar e iniciar",
+            width="stretch",
+        )
+
+        cancelar_onboarding = col_onb2.form_submit_button(
+            "Cancelar",
+            width="stretch",
+            disabled=not modo_reconfiguracao,
+        )
+
+    if cancelar_onboarding and modo_reconfiguracao:
+        st.session_state["mostrar_reconfiguracao_conta"] = False
+        st.rerun()
+
+    if salvar_onboarding:
+        if not confirmar_onboarding:
+            st.error(
+                "Marque a confirmação antes de continuar."
+            )
+        else:
+            try:
+                salvar_inicio_controle_conta(
+                    data_corte_onboarding,
+                    float(saldo_atual_onboarding),
+                )
+
+                st.session_state[
+                    "mostrar_reconfiguracao_conta"
+                ] = False
+
+                st.success(
+                    "Conta configurada. Os lançamentos existentes "
+                    "foram reconciliados sem dupla contagem."
+                )
+                st.rerun()
+
+            except Exception as erro:
+                st.error(
+                    "Não foi possível configurar a conta: "
+                    f"{type(erro).__name__}: {erro}"
+                )
+
+    st.stop()
+
 
 pagina_ativa = st.sidebar.radio(
     "Navegação:",
@@ -1722,7 +1975,7 @@ if pagina_ativa == "🧭 Diagnóstico Financeiro":
 
     col_diag1, col_diag2, col_diag3 = st.columns(3)
     col_diag1.metric(
-        "Saldo calculado da conta",
+        "Saldo calculado desde a data de início",
         (
             f"R$ {saldo_real_exibido:,.2f}"
             if saldo_inicial_configurado
@@ -1807,7 +2060,7 @@ if pagina_ativa == "📅 Fluxo de Caixa Futuro":
 
     st.markdown("### 🔎 Como essa projeção foi calculada")
     st.write(
-        "O caixa base considera renda mensal cadastrada, entradas já realizadas no mês atual e saídas em dinheiro/Pix/débito já realizadas. "
+        "O caixa base parte do saldo calculado da conta. "
         "Depois o sistema soma recebimentos futuros e subtrai contas agendadas, saídas futuras registradas e uma estimativa de fatura do cartão."
     )
 
