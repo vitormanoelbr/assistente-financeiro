@@ -837,6 +837,48 @@ def buscar_lancamentos_painel_http(user_id: str, ano: int, mes: int) -> list[dic
     return [registro for registro in registros if eh_lancamento_real(registro)]
 
 
+
+
+def formatar_moeda_br(valor) -> str:
+    numero = normalizar_numero(valor, 0.0)
+    texto = f"R$ {numero:,.2f}"
+    return texto.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def preparar_dataframe_painel_lancamentos(registros: list[dict]):
+    colunas_painel = [
+        "id",
+        "data",
+        "descricao",
+        "grupo_orcamentario",
+        "subcategoria",
+        "valor",
+        "satisfacao",
+        "tipo",
+        "user_id",
+    ]
+    df = pd.DataFrame(registros).copy()
+
+    for coluna in colunas_painel:
+        if coluna not in df.columns:
+            df[coluna] = None
+
+    df = df[colunas_painel].copy()
+    df["data_dt"] = pd.to_datetime(df["data"], errors="coerce")
+    df["valor_num"] = df["valor"].apply(lambda valor: normalizar_numero(valor, 0.0))
+    df["classe"] = df["tipo"].apply(classificar_movimento)
+    return df
+
+
+def rotulo_classe_movimento(classe: str) -> str:
+    rotulos = {
+        "entrada": "Entrada",
+        "saida": "Saída",
+        "cartao": "Cartão",
+    }
+    return rotulos.get(classe, classe)
+
+
 def validar_dados_lancamento(descricao, grupo_orcamentario, subcategoria, tipo, valor) -> list[str]:
     erros = []
     if not normalizar_texto(descricao):
@@ -1519,6 +1561,186 @@ if pagina_teste == "Diagnóstico":
             "Falha ao carregar o diagnóstico: "
             f"{type(erro).__name__}: {erro}"
         )
+
+elif pagina_teste == "Painel e Lançamentos":
+    st.title("💼 Painel e Lançamentos")
+    st.caption(
+        "Centro operacional dos lançamentos financeiros reais. "
+        "Compromissos da Agenda e registros de configuração não aparecem aqui."
+    )
+
+    hoje_painel = datetime.date.today()
+    col_periodo1, col_periodo2 = st.columns(2)
+
+    with col_periodo1:
+        ano_painel = st.selectbox(
+            "Ano:",
+            [hoje_painel.year - 1, hoje_painel.year, hoje_painel.year + 1],
+            index=1,
+            key="painel_ano_http",
+        )
+
+    with col_periodo2:
+        mes_painel = st.selectbox(
+            "Mês:",
+            list(NOMES_MESES.keys()),
+            index=hoje_painel.month - 1,
+            format_func=lambda numero: NOMES_MESES[numero],
+            key="painel_mes_http",
+        )
+
+    try:
+        registros_painel = buscar_lancamentos_painel_http(
+            USER_ID,
+            int(ano_painel),
+            int(mes_painel),
+        )
+    except httpx.TimeoutException:
+        st.error(
+            "A consulta do Painel e Lançamentos ultrapassou 20 segundos."
+        )
+        st.stop()
+    except httpx.RequestError as erro:
+        st.error(
+            f"Falha de conexão ao consultar o Painel e Lançamentos: {erro}"
+        )
+        st.stop()
+    except RuntimeError as erro:
+        st.error(f"Falha ao carregar lançamentos reais: {erro}")
+        st.stop()
+    except Exception as erro:
+        st.error(
+            "Falha inesperada ao carregar o Painel e Lançamentos: "
+            f"{type(erro).__name__}: {erro}"
+        )
+        st.stop()
+
+    df_painel = preparar_dataframe_painel_lancamentos(registros_painel)
+    resumo_painel = calcular_resumo_lancamentos(df_painel)
+
+    col_metrica1, col_metrica2, col_metrica3, col_metrica4 = st.columns(4)
+    col_metrica1.metric("Entradas", formatar_moeda_br(resumo_painel["entradas"]))
+    col_metrica2.metric(
+        "Saídas em dinheiro/Pix",
+        formatar_moeda_br(resumo_painel["saidas_dinheiro"]),
+    )
+    col_metrica3.metric("Cartão", formatar_moeda_br(resumo_painel["cartao"]))
+    col_metrica4.metric("Saldo", formatar_moeda_br(resumo_painel["saldo"]))
+
+    if df_painel.empty:
+        st.info(
+            "Nenhum lançamento financeiro real foi encontrado para o mês selecionado."
+        )
+    else:
+        st.markdown("---")
+        st.subheader("Lançamentos reais")
+
+        df_filtrado = df_painel.copy()
+        col_filtro1, col_filtro2 = st.columns(2)
+
+        with col_filtro1:
+            busca_descricao = st.text_input(
+                "Buscar na descrição:",
+                key="painel_busca_descricao",
+            )
+
+        with col_filtro2:
+            classes_disponiveis = [
+                rotulo_classe_movimento(classe)
+                for classe in sorted(df_painel["classe"].dropna().unique())
+            ]
+            classes_selecionadas = st.multiselect(
+                "Classe:",
+                ["Entrada", "Saída", "Cartão"],
+                default=classes_disponiveis,
+                key="painel_filtro_classe",
+            )
+
+        col_filtro3, col_filtro4 = st.columns(2)
+        grupos_disponiveis = sorted(
+            valor for valor in df_painel["grupo_orcamentario"].dropna().unique()
+            if normalizar_texto(valor)
+        )
+        subcategorias_disponiveis = sorted(
+            valor for valor in df_painel["subcategoria"].dropna().unique()
+            if normalizar_texto(valor)
+        )
+
+        with col_filtro3:
+            grupos_selecionados = st.multiselect(
+                "Grupo orçamentário:",
+                grupos_disponiveis,
+                default=grupos_disponiveis,
+                key="painel_filtro_grupo",
+            )
+
+        with col_filtro4:
+            subcategorias_selecionadas = st.multiselect(
+                "Subcategoria:",
+                subcategorias_disponiveis,
+                default=subcategorias_disponiveis,
+                key="painel_filtro_subcategoria",
+            )
+
+        texto_busca = _texto_normalizado_busca(busca_descricao)
+        if texto_busca:
+            df_filtrado = df_filtrado[
+                df_filtrado["descricao"].apply(
+                    lambda valor: texto_busca in _texto_normalizado_busca(valor)
+                )
+            ]
+
+        classes_por_rotulo = {
+            "Entrada": "entrada",
+            "Saída": "saida",
+            "Cartão": "cartao",
+        }
+        classes_filtradas = [
+            classes_por_rotulo[rotulo]
+            for rotulo in classes_selecionadas
+            if rotulo in classes_por_rotulo
+        ]
+        df_filtrado = df_filtrado[df_filtrado["classe"].isin(classes_filtradas)]
+
+        if grupos_disponiveis:
+            df_filtrado = df_filtrado[
+                df_filtrado["grupo_orcamentario"].isin(grupos_selecionados)
+            ]
+        if subcategorias_disponiveis:
+            df_filtrado = df_filtrado[
+                df_filtrado["subcategoria"].isin(subcategorias_selecionadas)
+            ]
+
+        if df_filtrado.empty:
+            st.info("Nenhum lançamento corresponde aos filtros selecionados.")
+        else:
+            df_tabela = df_filtrado.sort_values(
+                ["data_dt", "id"],
+                ascending=[False, False],
+            ).copy()
+            df_tabela["Data"] = df_tabela["data_dt"].dt.strftime("%d/%m/%Y")
+            df_tabela["Descrição"] = df_tabela["descricao"]
+            df_tabela["Tipo"] = df_tabela["tipo"]
+            df_tabela["Grupo"] = df_tabela["grupo_orcamentario"]
+            df_tabela["Subcategoria"] = df_tabela["subcategoria"]
+            df_tabela["Valor"] = df_tabela["valor_num"].apply(formatar_moeda_br)
+            df_tabela["Satisfação"] = df_tabela["satisfacao"]
+
+            st.dataframe(
+                df_tabela[
+                    [
+                        "Data",
+                        "Descrição",
+                        "Tipo",
+                        "Grupo",
+                        "Subcategoria",
+                        "Valor",
+                        "Satisfação",
+                    ]
+                ],
+                width="stretch",
+                hide_index=True,
+            )
 
 elif pagina_teste == "Agenda":
     st.title("📅 Agenda de Compromissos")
