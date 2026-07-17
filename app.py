@@ -679,6 +679,241 @@ def buscar_movimentacoes_mes_http(
 
 
 
+# ==================== REGRAS E HTTP DO PAINEL DE LANÇAMENTOS ====================
+def _texto_normalizado_busca(valor) -> str:
+    """Normaliza texto para comparações case-insensitive e sem acentos."""
+    texto = normalizar_texto(valor)
+    if not texto:
+        return ""
+
+    import unicodedata
+
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(
+        caractere for caractere in texto
+        if not unicodedata.combining(caractere)
+    )
+    return texto.upper()
+
+
+def _valor_registro(registro, chave):
+    if isinstance(registro, dict):
+        return registro.get(chave)
+
+    try:
+        return registro[chave]
+    except Exception:
+        return None
+
+
+def eh_registro_agenda(registro) -> bool:
+    """Identifica compromissos administrativos da Agenda, não baixas reais."""
+    grupo = _texto_normalizado_busca(_valor_registro(registro, "grupo_orcamentario"))
+    descricao = _texto_normalizado_busca(_valor_registro(registro, "descricao"))
+
+    return "AGENDA" in grupo or "[AGENDA COMPROMISSO]" in descricao
+
+
+def eh_registro_administrativo(registro) -> bool:
+    """Identifica registros reservados de configuração/administração."""
+    grupo = _texto_normalizado_busca(_valor_registro(registro, "grupo_orcamentario"))
+    descricao = _texto_normalizado_busca(_valor_registro(registro, "descricao"))
+
+    marcadores_descricao = ("CONFIG_PERFIL", "CONFIG_CARTAO", "DIVIDA_ATIVA")
+    return (
+        any(marcador in descricao for marcador in marcadores_descricao)
+        or "CONFIGURAC" in grupo
+    )
+
+
+def eh_lancamento_real(registro) -> bool:
+    """Retorna True somente para lançamentos financeiros reais."""
+    return (
+        not eh_registro_agenda(registro)
+        and not eh_registro_administrativo(registro)
+    )
+
+
+def filtrar_lancamentos_reais_df(df):
+    """Remove Agenda e registros administrativos de um DataFrame."""
+    if df is None or df.empty:
+        return df.copy() if df is not None else pd.DataFrame()
+
+    mascara = df.apply(eh_lancamento_real, axis=1)
+    return df.loc[mascara].copy()
+
+
+def calcular_resumo_lancamentos(df) -> dict:
+    """Calcula totais financeiros a partir dos lançamentos informados."""
+    resumo = {
+        "entradas": 0.0,
+        "saidas_dinheiro": 0.0,
+        "cartao": 0.0,
+        "despesas_totais": 0.0,
+        "saldo": 0.0,
+    }
+
+    if df is None or df.empty:
+        return resumo
+
+    for _, registro in df.iterrows():
+        valor = normalizar_numero(registro.get("valor"), 0.0)
+        classe = classificar_movimento(registro.get("tipo"))
+
+        if classe == "entrada":
+            resumo["entradas"] += valor
+        elif classe == "cartao":
+            resumo["cartao"] += valor
+        else:
+            resumo["saidas_dinheiro"] += valor
+
+    resumo["despesas_totais"] = resumo["saidas_dinheiro"] + resumo["cartao"]
+    resumo["saldo"] = resumo["entradas"] - resumo["despesas_totais"]
+    return resumo
+
+
+def _headers_movimentacoes(prefer: bool = False, content_type: bool = False) -> dict:
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {st.session_state['user_token']}",
+        "Accept": "application/json",
+    }
+    if content_type:
+        headers["Content-Type"] = "application/json"
+    if prefer:
+        headers["Prefer"] = "return=representation"
+    return headers
+
+
+def _url_movimentacoes() -> str:
+    return f"{SUPABASE_URL}/rest/v1/movimentacoes"
+
+
+def _primeiro_dia_mes_seguinte(ano: int, mes: int) -> datetime.date:
+    if mes == 12:
+        return datetime.date(ano + 1, 1, 1)
+    return datetime.date(ano, mes + 1, 1)
+
+
+def buscar_lancamentos_painel_http(user_id: str, ano: int, mes: int) -> list[dict]:
+    """Busca lançamentos reais mensais do usuário via REST paginado."""
+    if not normalizar_texto(user_id):
+        raise ValueError("user_id é obrigatório.")
+
+    primeiro_dia = datetime.date(ano, mes, 1)
+    proximo_mes = _primeiro_dia_mes_seguinte(ano, mes)
+    tamanho_pagina = 1000
+    inicio = 0
+    registros = []
+
+    parametros = [
+        ("select", "id,data,descricao,grupo_orcamentario,subcategoria,valor,satisfacao,tipo,user_id"),
+        ("user_id", f"eq.{user_id}"),
+        ("data", f"gte.{primeiro_dia.isoformat()}"),
+        ("data", f"lt.{proximo_mes.isoformat()}"),
+        ("order", "data.asc"),
+    ]
+
+    with httpx.Client(timeout=20.0) as cliente:
+        while True:
+            fim = inicio + tamanho_pagina - 1
+            headers = _headers_movimentacoes()
+            headers["Range"] = f"{inicio}-{fim}"
+            resposta = cliente.get(_url_movimentacoes(), headers=headers, params=parametros)
+
+            if resposta.status_code not in (200, 206):
+                detalhe = resposta.text[:500]
+                raise RuntimeError(f"Consulta retornou HTTP {resposta.status_code}: {detalhe}")
+
+            dados = resposta.json()
+            if not isinstance(dados, list):
+                raise RuntimeError("O banco retornou um formato inesperado.")
+
+            registros.extend(dados)
+            if len(dados) < tamanho_pagina:
+                break
+            inicio += tamanho_pagina
+
+    return [registro for registro in registros if eh_lancamento_real(registro)]
+
+
+def validar_dados_lancamento(descricao, grupo_orcamentario, subcategoria, tipo, valor) -> list[str]:
+    erros = []
+    if not normalizar_texto(descricao):
+        erros.append("Descrição é obrigatória.")
+    if not normalizar_texto(grupo_orcamentario):
+        erros.append("Grupo orçamentário é obrigatório.")
+    if not normalizar_texto(subcategoria):
+        erros.append("Subcategoria é obrigatória.")
+    if not normalizar_texto(tipo):
+        erros.append("Tipo é obrigatório.")
+    if normalizar_numero(valor, 0.0) <= 0:
+        erros.append("Valor deve ser maior que zero.")
+
+    if "AGENDA" in _texto_normalizado_busca(grupo_orcamentario) or "CONFIGURAC" in _texto_normalizado_busca(grupo_orcamentario):
+        erros.append("Grupo reservado não pode ser usado em lançamentos reais.")
+
+    descricao_norm = _texto_normalizado_busca(descricao)
+    for marcador in ("[AGENDA COMPROMISSO]", "CONFIG_PERFIL", "CONFIG_CARTAO", "DIVIDA_ATIVA"):
+        if marcador in descricao_norm:
+            erros.append("Descrição contém marcador reservado.")
+            break
+
+    return erros
+
+
+def _payload_lancamento(data_lancamento, descricao, tipo, grupo_orcamentario, subcategoria, valor, satisfacao="") -> dict:
+    data = data_lancamento.isoformat() if hasattr(data_lancamento, "isoformat") else str(data_lancamento)
+    return {
+        "data": data,
+        "descricao": normalizar_texto(descricao),
+        "grupo_orcamentario": normalizar_texto(grupo_orcamentario),
+        "subcategoria": normalizar_texto(subcategoria),
+        "valor": float(valor),
+        "satisfacao": normalizar_texto(satisfacao),
+        "tipo": normalizar_texto(tipo),
+    }
+
+
+def _extrair_um_registro(resposta, acao: str) -> dict:
+    dados = resposta.json()
+    if not isinstance(dados, list) or len(dados) != 1 or not isinstance(dados[0], dict):
+        raise RuntimeError(f"{acao} deve retornar exatamente um registro.")
+    return dados[0]
+
+
+def cadastrar_lancamento_http(user_id, data_lancamento, descricao, tipo, grupo_orcamentario, subcategoria, valor, satisfacao="") -> dict:
+    payload = _payload_lancamento(data_lancamento, descricao, tipo, grupo_orcamentario, subcategoria, valor, satisfacao)
+    payload["user_id"] = user_id
+    with httpx.Client(timeout=20.0) as cliente:
+        resposta = cliente.post(_url_movimentacoes(), headers=_headers_movimentacoes(prefer=True, content_type=True), json=payload)
+    if resposta.status_code not in (200, 201):
+        raise RuntimeError(f"Cadastro retornou HTTP {resposta.status_code}: {resposta.text[:500]}")
+    registro = _extrair_um_registro(resposta, "Cadastro")
+    if registro.get("id") is None:
+        raise RuntimeError("Cadastro não retornou id do registro.")
+    return registro
+
+
+def atualizar_lancamento_http(lancamento_id, user_id, data_lancamento, descricao, tipo, grupo_orcamentario, subcategoria, valor, satisfacao="") -> dict:
+    payload = _payload_lancamento(data_lancamento, descricao, tipo, grupo_orcamentario, subcategoria, valor, satisfacao)
+    params = [("id", f"eq.{lancamento_id}"), ("user_id", f"eq.{user_id}")]
+    with httpx.Client(timeout=20.0) as cliente:
+        resposta = cliente.patch(_url_movimentacoes(), headers=_headers_movimentacoes(prefer=True, content_type=True), params=params, json=payload)
+    if resposta.status_code not in (200, 204):
+        raise RuntimeError(f"Edição retornou HTTP {resposta.status_code}: {resposta.text[:500]}")
+    return _extrair_um_registro(resposta, "Edição")
+
+
+def excluir_lancamento_http(lancamento_id, user_id) -> dict:
+    params = [("id", f"eq.{lancamento_id}"), ("user_id", f"eq.{user_id}")]
+    with httpx.Client(timeout=20.0) as cliente:
+        resposta = cliente.delete(_url_movimentacoes(), headers=_headers_movimentacoes(prefer=True), params=params)
+    if resposta.status_code not in (200, 204):
+        raise RuntimeError(f"Exclusão retornou HTTP {resposta.status_code}: {resposta.text[:500]}")
+    return _extrair_um_registro(resposta, "Exclusão")
+
+
 def buscar_agenda_http(
     user_id: str,
     modo: str,
