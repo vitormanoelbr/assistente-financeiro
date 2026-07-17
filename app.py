@@ -595,8 +595,9 @@ pagina_teste = st.sidebar.radio(
 
 st.sidebar.markdown("---")
 st.sidebar.caption(
-    "Etapa atual: Diagnóstico e Agenda consultam dados. "
-    "As demais páginas continuam vazias."
+    "Etapa atual: Diagnóstico, Painel e Lançamentos e Agenda consultam dados. "
+    "A Agenda permite consultar, cadastrar, editar e dar baixa. "
+    "As demais páginas continuam em desenvolvimento."
 )
 
 NOMES_MESES = {
@@ -1589,6 +1590,14 @@ elif pagina_teste == "Painel e Lançamentos":
             key="painel_mes_http",
         )
 
+    periodo_painel = (int(ano_painel), int(mes_painel))
+    if st.session_state.get("painel_periodo_filtros") != periodo_painel:
+        st.session_state["painel_periodo_filtros"] = periodo_painel
+        st.session_state["painel_busca_descricao"] = ""
+        st.session_state["painel_filtro_classe"] = []
+        st.session_state["painel_filtro_grupo"] = []
+        st.session_state["painel_filtro_subcategoria"] = []
+
     try:
         registros_painel = buscar_lancamentos_painel_http(
             USER_ID,
@@ -1618,14 +1627,57 @@ elif pagina_teste == "Painel e Lançamentos":
     df_painel = preparar_dataframe_painel_lancamentos(registros_painel)
     resumo_painel = calcular_resumo_lancamentos(df_painel)
 
-    col_metrica1, col_metrica2, col_metrica3, col_metrica4 = st.columns(4)
-    col_metrica1.metric("Entradas", formatar_moeda_br(resumo_painel["entradas"]))
-    col_metrica2.metric(
-        "Saídas em dinheiro/Pix",
-        formatar_moeda_br(resumo_painel["saidas_dinheiro"]),
+    st.markdown(
+        """
+        <style>
+        .painel-metricas {
+            display: grid;
+            gap: 0.75rem;
+            grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+            margin: 0.5rem 0 1rem;
+        }
+        .painel-metrica {
+            border: 1px solid rgba(49, 51, 63, 0.2);
+            border-radius: 0.5rem;
+            padding: 0.75rem 1rem;
+            min-width: 0;
+        }
+        .painel-metrica__rotulo {
+            color: rgba(49, 51, 63, 0.7);
+            font-size: 0.875rem;
+            line-height: 1.2;
+            margin-bottom: 0.35rem;
+        }
+        .painel-metrica__valor {
+            font-size: clamp(1.2rem, 2.6vw, 1.75rem);
+            font-weight: 700;
+            line-height: 1.2;
+            overflow-wrap: anywhere;
+            white-space: normal;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
-    col_metrica3.metric("Cartão", formatar_moeda_br(resumo_painel["cartao"]))
-    col_metrica4.metric("Saldo", formatar_moeda_br(resumo_painel["saldo"]))
+    metricas_painel = [
+        ("Entradas", formatar_moeda_br(resumo_painel["entradas"])),
+        (
+            "Saídas em dinheiro/Pix",
+            formatar_moeda_br(resumo_painel["saidas_dinheiro"]),
+        ),
+        ("Cartão", formatar_moeda_br(resumo_painel["cartao"])),
+        ("Saldo", formatar_moeda_br(resumo_painel["saldo"])),
+    ]
+    html_metricas = ['<div class="painel-metricas">']
+    for rotulo_metrica, valor_metrica in metricas_painel:
+        html_metricas.append(
+            '<div class="painel-metrica">'
+            f'<div class="painel-metrica__rotulo">{rotulo_metrica}</div>'
+            f'<div class="painel-metrica__valor">{valor_metrica}</div>'
+            "</div>"
+        )
+    html_metricas.append("</div>")
+    st.markdown("".join(html_metricas), unsafe_allow_html=True)
 
     if df_painel.empty:
         st.info(
@@ -1645,14 +1697,9 @@ elif pagina_teste == "Painel e Lançamentos":
             )
 
         with col_filtro2:
-            classes_disponiveis = [
-                rotulo_classe_movimento(classe)
-                for classe in sorted(df_painel["classe"].dropna().unique())
-            ]
             classes_selecionadas = st.multiselect(
                 "Classe:",
                 ["Entrada", "Saída", "Cartão"],
-                default=classes_disponiveis,
                 key="painel_filtro_classe",
             )
 
@@ -1670,7 +1717,6 @@ elif pagina_teste == "Painel e Lançamentos":
             grupos_selecionados = st.multiselect(
                 "Grupo orçamentário:",
                 grupos_disponiveis,
-                default=grupos_disponiveis,
                 key="painel_filtro_grupo",
             )
 
@@ -1678,7 +1724,6 @@ elif pagina_teste == "Painel e Lançamentos":
             subcategorias_selecionadas = st.multiselect(
                 "Subcategoria:",
                 subcategorias_disponiveis,
-                default=subcategorias_disponiveis,
                 key="painel_filtro_subcategoria",
             )
 
@@ -1700,13 +1745,14 @@ elif pagina_teste == "Painel e Lançamentos":
             for rotulo in classes_selecionadas
             if rotulo in classes_por_rotulo
         ]
-        df_filtrado = df_filtrado[df_filtrado["classe"].isin(classes_filtradas)]
+        if classes_filtradas:
+            df_filtrado = df_filtrado[df_filtrado["classe"].isin(classes_filtradas)]
 
-        if grupos_disponiveis:
+        if grupos_selecionados:
             df_filtrado = df_filtrado[
                 df_filtrado["grupo_orcamentario"].isin(grupos_selecionados)
             ]
-        if subcategorias_disponiveis:
+        if subcategorias_selecionadas:
             df_filtrado = df_filtrado[
                 df_filtrado["subcategoria"].isin(subcategorias_selecionadas)
             ]
@@ -1740,6 +1786,24 @@ elif pagina_teste == "Painel e Lançamentos":
                 ],
                 width="stretch",
                 hide_index=True,
+                column_config={
+                    "Data": st.column_config.TextColumn("Data", width="small"),
+                    "Descrição": st.column_config.TextColumn(
+                        "Descrição",
+                        width="large",
+                    ),
+                    "Tipo": st.column_config.TextColumn("Tipo", width="medium"),
+                    "Grupo": st.column_config.TextColumn("Grupo", width="medium"),
+                    "Subcategoria": st.column_config.TextColumn(
+                        "Subcategoria",
+                        width="medium",
+                    ),
+                    "Valor": st.column_config.TextColumn("Valor", width="small"),
+                    "Satisfação": st.column_config.TextColumn(
+                        "Satisfação",
+                        width="small",
+                    ),
+                },
             )
 
 elif pagina_teste == "Agenda":
@@ -2355,6 +2419,7 @@ else:
 
 st.markdown("---")
 st.caption(
-    "Teste controlado: Diagnóstico e Agenda consultam o banco. "
-    "A Agenda permite consultar, cadastrar, editar e dar baixa. A exclusão manual ainda não foi ativada."
+    "Diagnóstico, Painel e Lançamentos e Agenda consultam o banco. "
+    "O Painel está disponível em modo de leitura. "
+    "A Agenda permite consultar, cadastrar, editar e dar baixa."
 )
