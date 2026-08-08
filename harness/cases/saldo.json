@@ -1,0 +1,35 @@
+[
+  {
+    "id": "SALDO-002-A",
+    "saldo_inicial": 2000.0,
+    "movimentos": [
+      {
+        "tipo": "Faturamento ou Receita (Entrada)",
+        "valor": 500.0
+      }
+    ],
+    "saldo_esperado": 2500.0
+  },
+  {
+    "id": "SALDO-003-A",
+    "saldo_inicial": 2000.0,
+    "movimentos": [
+      {
+        "tipo": "Saída Dinheiro / Pix (Débito)",
+        "valor": 300.0
+      }
+    ],
+    "saldo_esperado": 1700.0
+  },
+  {
+    "id": "SALDO-004-A",
+    "saldo_inicial": 2000.0,
+    "movimentos": [
+      {
+        "tipo": "Saída Cartão de Crédito",
+        "valor": 500.0
+      }
+    ],
+    "saldo_esperado": 2000.0
+  }
+]
