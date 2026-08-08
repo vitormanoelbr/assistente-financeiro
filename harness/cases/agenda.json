@@ -1,0 +1,17 @@
+[
+  {
+    "id": "AGENDA-002-A",
+    "natureza": "A pagar",
+    "resultado": "cria saída real e remove compromisso"
+  },
+  {
+    "id": "AGENDA-003-A",
+    "natureza": "A receber",
+    "resultado": "cria entrada real e remove compromisso"
+  },
+  {
+    "id": "AGENDA-006-A",
+    "cenario": "falha ao excluir compromisso",
+    "resultado": "rollback do lançamento recém-criado"
+  }
+]
