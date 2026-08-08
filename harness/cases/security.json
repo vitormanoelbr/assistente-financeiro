@@ -1,0 +1,12 @@
+[
+  {
+    "id": "USER-002-A",
+    "acao": "buscar",
+    "resultado": "requisição contém user_id autenticado"
+  },
+  {
+    "id": "USER-004-A",
+    "acao": "alterar/excluir",
+    "resultado": "requisição contém user_id autenticado"
+  }
+]
